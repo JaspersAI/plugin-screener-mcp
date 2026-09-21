@@ -77,7 +77,13 @@ const OutputSchema = z.object({
   qualitative_ready: z.boolean(),
   qualitative_max: z.number(),
   qualitative: z
-    .object({ run_id: z.string().nullable(), status: z.string(), progress: Progress.nullable(), error: z.string().optional() })
+    .object({
+      run_id: z.string().nullable(),
+      status: z.string(),
+      progress: Progress.nullable(),
+      passed: z.array(z.string()).optional(),
+      error: z.string().optional(),
+    })
     .optional(),
   open: z.string(),
 })

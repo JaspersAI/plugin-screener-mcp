@@ -153,7 +153,7 @@ function RunStatus({ run, snapshot, screen, settled, ready, onRun, onRetry, onCl
   }
   return (
     <>
-      <span className="sc-status">{snapshot ? progressText(snapshot.progress, snapshot.status) : run.id ? 'Reading the run…' : 'Starting…'}</span>
+      <span className="sc-status">{snapshot ? progressText(snapshot.progress, snapshot.status) : run.id ? 'Reading the run…' : ready ? 'Starting…' : 'A run was asked for. Add a criterion and it starts.'}</span>
       {/* There is no stopping a run: clearing takes it off this panel, and the server goes on reading. */}
       {run.id && (
         <button type="button" className="sc-btn" onClick={onClear} title="Takes the run off this panel. The server keeps it, and finishes it if it is still going.">

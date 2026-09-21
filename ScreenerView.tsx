@@ -15,6 +15,7 @@ import {
   inSync,
   needsStart,
   overLimit,
+  passedTickers,
   readFields,
   readRun,
   readRunText,
@@ -22,6 +23,7 @@ import {
   readStart,
   screenArgs,
   shownColumns,
+  stageOf,
   type Criterion,
   type Echo,
   type Filter,
@@ -202,6 +204,8 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   const runId = run?.id
   const status = useRef(run?.status)
   status.current = run?.status
+  const chosen = useRef(verdicts)
+  chosen.current = verdicts
   useEffect(() => {
     if (!runId) {
       setSnapshot(null)
@@ -226,7 +230,10 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         }
         setSnapshot(next)
         const now = next.status === 'done' ? 'done' : 'running'
-        if (status.current !== now) setRun({ id: runId, status: now })
+        // A run that finishes shows who passed: until then the rows were only the list being read, and
+        // left as they are they read as the answer. A verdict filter somebody already chose stays.
+        if (status.current !== now && now === 'done' && chosen.current.length === 0) void write({ run: { id: runId, status: now }, verdicts: ['pass'] })
+        else if (status.current !== now) setRun({ id: runId, status: now })
         if (next.status === 'done') return
       }
     })()
@@ -290,7 +297,13 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
       qualitative_ready: screen?.ready ?? false,
       qualitative_max: screen?.max ?? 0,
       qualitative: run
-        ? { run_id: run.id ?? null, status: run.status ?? 'starting', progress: snapshot?.progress ?? null, ...(run.error ? { error: run.error } : {}) }
+        ? {
+            run_id: run.id ?? null,
+            status: stageOf(criteria, run),
+            progress: snapshot?.progress ?? null,
+            ...(snapshot ? { passed: passedTickers(snapshot) } : {}),
+            ...(run.error ? { error: run.error } : {}),
+          }
         : undefined,
       open,
     }),
@@ -333,6 +346,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         sort={sort}
         onSort={toggleSort}
         loading={loading && data === undefined}
+        empty={snapshot && verdicts.length > 0 && rows.length > 0 ? `No company on this page is ${verdicts.join(' or ')}. The verdict buttons above show the others.` : 'No companies match.'}
         run={snapshot ? { criteria: snapshot.criteria, results } : null}
         open={open}
         onOpen={(ticker) => setOpen(ticker === open ? '' : ticker)}

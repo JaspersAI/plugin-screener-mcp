@@ -13,6 +13,8 @@ import {
   groupFields,
   inSync,
   needsStart,
+  passedTickers,
+  stageOf,
   OUTPUT_BYTES,
   overLimit,
   parseValue,
@@ -392,4 +394,29 @@ test('the summary says how many pass, of how many, behind which screen, and wher
     'Screener: 3 of 5,378 pass, sort revenue desc, qualitative run running: reading: 2 of 3 · 1 pass · 0 fail · 0 unclear · 0 unverified · 1 error, evidence open for AAPL',
   )
   assert.equal(summarize({}, output({ qualitative: { run_id: null, status: 'error', progress: null, error: 'the list is too long' } })), 'Screener: 281 of 5,378 pass, sort revenue desc, qualitative run failed: the list is too long')
+})
+
+test('where the qualitative stage stands is one word, and a run asked for with no criteria is not "starting"', () => {
+  const criteria = [{ id: 'reshore', question: 'Does the company discuss reshoring?' }]
+  assert.equal(stageOf([], null), 'none')
+  assert.equal(stageOf(criteria, null), 'none')
+  // Asked for, but there is nothing to ask the filings: it will never start, and must not read as if it had.
+  assert.equal(stageOf([], {}), 'no_criteria')
+  assert.equal(stageOf(undefined, { status: 'running' }), 'no_criteria')
+  assert.equal(stageOf(criteria, {}), 'starting')
+  assert.equal(stageOf(criteria, { id: 'run_1', status: 'running' }), 'running')
+  assert.equal(stageOf(criteria, { id: 'run_1' }), 'running')
+  assert.equal(stageOf(criteria, { id: 'run_1', status: 'done' }), 'done')
+  assert.equal(stageOf(criteria, { status: 'error', error: 'over the limit' }), 'error')
+})
+
+test('who passed is the companies with a pass, by ticker: the rows of the table are only the list that was read', () => {
+  const run = readRun(META, [
+    { ...ROWS[0], ticker: 'AAA', verdict: 'pass' },
+    { ...ROWS[0], cik: 2, ticker: 'BBB', verdict: 'fail' },
+    { ...ROWS[0], cik: 3, ticker: null, verdict: 'pass' },
+    { ...ROWS[0], cik: 4, ticker: 'DDD', verdict: 'unverified' },
+  ])
+  assert.deepEqual(passedTickers(run), ['AAA'])
+  assert.deepEqual(passedTickers(null), [])
 })

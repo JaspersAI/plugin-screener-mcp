@@ -14,6 +14,8 @@ interface Props {
   onSort: (field: string) => void
   /** Nothing is drawn as empty while the first run is still out. */
   loading: boolean
+  /** What an empty table says: that nothing matches, or that a verdict filter hides what does. */
+  empty: string
   /** A qualitative run's criteria and what it found, by CIK. */
   run: { criteria: Criterion[]; results: Map<number, CompanyResult> } | null
   /** The ticker whose evidence is open. */
@@ -21,7 +23,7 @@ interface Props {
   onOpen: (ticker: string) => void
 }
 
-export function Table({ rows, columns, fields, sort, onSort, loading, run, open, onOpen }: Props): ReactElement {
+export function Table({ rows, columns, fields, sort, onSort, loading, empty, run, open, onOpen }: Props): ReactElement {
   return (
     <div className="sc-table-wrap">
       <table className="sc-table">
@@ -85,7 +87,7 @@ export function Table({ rows, columns, fields, sort, onSort, loading, run, open,
           })}
         </tbody>
       </table>
-      {rows.length === 0 && !loading && <p className="sc-empty">No companies match.</p>}
+      {rows.length === 0 && !loading && <p className="sc-empty">{empty}</p>}
     </div>
   )
 }

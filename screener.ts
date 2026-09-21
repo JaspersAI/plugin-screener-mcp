@@ -488,6 +488,20 @@ export function needsStart(criteria: Criterion[] | undefined, run: Run | null | 
   return Boolean(criteria?.length) && run !== null && run !== undefined && !run.id && !(run.status === 'error' && run.error)
 }
 
+/**
+ * Where the qualitative stage stands, in one word, for the bar and the orchestrator alike. A run asked
+ * for with no criteria never starts, and must not read as if it had: that is how a reply came to promise
+ * results of a run that did not exist. What a model fills in beside the request counts no more here than in needsStart.
+ */
+export type Stage = 'none' | 'no_criteria' | 'starting' | 'running' | 'done' | 'error'
+
+export function stageOf(criteria: Criterion[] | undefined, run: Run | null | undefined): Stage {
+  if (!run) return 'none'
+  if (run.status === 'error' && run.error) return 'error'
+  if (!run.id) return criteria?.length ? 'starting' : 'no_criteria'
+  return run.status === 'done' ? 'done' : 'running'
+}
+
 /** What a started run answers with. */
 export function readStart(text: string): { runId: string; total: number } {
   const value = parseJson(text)
@@ -622,6 +636,11 @@ function readCriterion(c: Record<string, unknown>, citations: Record<string, Cit
   }
 }
 
+/** The companies that passed, by ticker. The table's rows are the list that was read; only these are what the user asked for. */
+export function passedTickers(run: Pick<RunSnapshot, 'results'> | null): string[] {
+  return (run?.results ?? []).flatMap((result) => (result.verdict === 'pass' && result.ticker ? [result.ticker] : []))
+}
+
 /** Where a run is, in one line: how many companies are read, then the counts by verdict. */
 export function progressText(progress: Progress, status: RunSnapshot['status']): string {
   const read = progress.total - progress.queued - progress.running
@@ -689,7 +708,8 @@ export interface Output {
   sort: Sort
   qualitative_ready: boolean
   qualitative_max: number
-  qualitative?: { run_id: string | null; status: string; progress: Progress | null; error?: string }
+  /** status is a Stage. passed: the tickers with a pass, once there are results; the rows above are only the list that was read. */
+  qualitative?: { run_id: string | null; status: string; progress: Progress | null; passed?: string[]; error?: string }
   open: string
 }
 
@@ -721,7 +741,9 @@ export function summarize(state: Partial<State>, output: Partial<Output>): strin
         ? `qualitative run failed: ${q.error ?? 'unknown error'}`
         : progress
           ? `qualitative run ${q.status}: ${progressText(progress, q.status === 'done' ? 'done' : 'running')}`
-          : `qualitative run ${q.status}`,
+          : q.status === 'no_criteria'
+            ? 'a qualitative run was asked for but NOT started: state.criteria is empty'
+            : `qualitative run ${q.status}`,
     )
   } else if (output.qualitative_ready) parts.push('ready for the qualitative stage')
   if (output.open) parts.push(`evidence open for ${output.open}`)
