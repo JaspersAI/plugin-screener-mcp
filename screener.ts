@@ -540,8 +540,7 @@ export interface RunSnapshot {
 
 /**
  * One get_qualitative_screen answer: its results are the dataset's rows, the rest its meta. Read
- * leniently. A criterion's evidence is a list of citation ids, the citations themselves sit once at
- * the top; a server that still puts the quote inside the evidence is read too.
+ * leniently. A criterion's evidence is a list of citation ids; the citations themselves sit once at the top.
  */
 export function readRun(meta: Record<string, unknown>, rows: Record<string, unknown>[]): RunSnapshot {
   const citations: Record<string, Citation> = {}
@@ -597,22 +596,8 @@ function readCitation(entry: unknown): Citation | null {
 }
 
 function readCriterion(c: Record<string, unknown>, citations: Record<string, Citation>): CriterionResult {
-  const evidence: string[] = []
-  for (const entry of Array.isArray(c.evidence) ? c.evidence : []) {
-    if (typeof entry === 'string') evidence.push(entry)
-    else if (isRecord(entry) && typeof entry.quote === 'string') {
-      // The quote inside the evidence, as the server sent it before citations had ids: it is its own citation.
-      const id = typeof entry.id === 'string' && entry.id ? entry.id : `${String(entry.chunk_id ?? '')}#${evidence.length}`
-      const link = entry.url ?? entry.sec_url
-      citations[id] ??= {
-        id,
-        title: [entry.form, entry.item ? `Item ${String(entry.item)}` : ''].filter(Boolean).join(' · '),
-        url: typeof link === 'string' && link.startsWith('https://') ? link : null,
-        quote: entry.quote,
-      }
-      evidence.push(id)
-    }
-  }
+  // An id with no citation behind it has nothing to show, so it is not kept.
+  const evidence = (Array.isArray(c.evidence) ? c.evidence : []).filter((id): id is string => typeof id === 'string' && id in citations)
   const gathered = isRecord(c.gathered) ? c.gathered : null
   return {
     id: typeof c.id === 'string' ? c.id : '',

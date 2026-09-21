@@ -318,13 +318,6 @@ test('a run without evidence, a run as text, and an answer that is nothing are a
   assert.deepEqual([nothing.status, nothing.results, nothing.progress.total], ['running', [], 0])
 })
 
-test('a server that still puts the quote inside the evidence is read too: each quote becomes its own citation', () => {
-  const old = { chunk_id: '0000320193-25-000079|1A|66002', quote: 'We depend on a single supplier', form: '10-K', item: '1A', accession: '0000320193-25-000079', sec_url: 'https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/' }
-  const run = readRun({ ...META, citations: undefined }, [{ ...ROWS[0], criteria: [{ id: 'sole_source', verdict: 'pass', evidence: [old] }] }])
-  const [id] = run.results[0]!.criteria[0]!.evidence
-  assert.deepEqual(run.citations[id!], { id, title: '10-K · Item 1A', url: old.sec_url, quote: old.quote })
-})
-
 test('where a run is reads in one line', () => {
   assert.equal(progressText(META.progress, 'running'), 'reading: 2 of 3 · 1 pass · 0 fail · 0 unclear · 0 unverified · 1 error')
   assert.equal(progressText({ ...META.progress, running: 0, error: 0, fail: 2 }, 'done'), '3 read · 1 pass · 2 fail · 0 unclear · 0 unverified')
