@@ -155,10 +155,12 @@ export function fieldLabel(field: string): string {
   return words.join(' ')
 }
 
+/** What every row carries whatever is asked for. Naming one as a column says nothing, so none is drawn twice and none is sent. */
+const IDENTITY = new Set(['cik', 'name', 'ticker', 'tickers', 'sic_description'])
+
 /** The columns the table draws after the company: the fields filtered on, the sort, then the ones asked for — the server's own rule. */
 export function shownColumns(filters: Filter[], sort: Sort, columns: string[]): string[] {
-  const identity = new Set(['cik', 'name', 'ticker', 'tickers', 'sic_description'])
-  return [...new Set([...filters.map((f) => f.field), sort.field, ...columns])].filter((field) => !identity.has(field))
+  return [...new Set([...filters.map((f) => f.field), sort.field, ...columns])].filter((field) => !IDENTITY.has(field))
 }
 
 // Formatting. A cell says a number the way a screener does (B, M, K); a chip and the dialog say a
@@ -421,22 +423,26 @@ export function inSync(state: Listed & { sessionId: string | null }, echo: Echo 
 }
 
 /**
- * What one screen_companies call sends. The list (filters, tickers, include_unlisted) goes whole when
- * the session does not hold it yet, and is left out when only the sort, the page or the columns
- * moved: to the server a call that names the list is a change of it, and one that does not is a read.
+ * What one screen_companies call sends. The list (filters, include_unlisted) goes whole when the
+ * session does not hold it yet, and is left out when only the sort, the page or the columns moved:
+ * to the server a call that names the list is a change of it, and one that does not is a read.
+ * No tickers leave the view unless the user has a list of their own: they go as the server's
+ * tickers parameter, an empty one only to clear a list the session still holds, and never as a column.
  */
 export function screenArgs(
   state: Listed & Pick<State, 'sort' | 'page' | 'columns' | 'sessionId'>,
   echo: Echo | null,
   pageSize: number,
 ): Record<string, unknown> {
-  const read = { sort: state.sort, columns: state.columns, limit: pageSize, offset: state.page * pageSize }
+  const columns = state.columns.filter((field) => !IDENTITY.has(field))
+  const read = { sort: state.sort, columns, limit: pageSize, offset: state.page * pageSize }
   if (inSync(state, echo)) return { session_id: state.sessionId, ...read }
+  // Left out, the session's list stays, and a new session has none: [] is only how a list is taken back.
+  const held = (echo?.tickers.length ?? 0) > 0
   return {
     ...(state.sessionId ? { session_id: state.sessionId } : {}),
     filters: state.filters,
-    // An empty list is how the server is told "every company again"; left out, the session's list would stay.
-    tickers: state.tickers,
+    ...(state.tickers.length > 0 ? { tickers: state.tickers } : held ? { tickers: [] } : {}),
     include_unlisted: state.includeUnlisted,
     ...read,
   }

@@ -213,17 +213,31 @@ test('a screen\'s answer is read from the dataset\'s meta', () => {
 
 test('the first call sends the whole list; one that only sorts, pages or adds columns names the session and nothing of the list', () => {
   assert.deepEqual(screenArgs({ ...VIEW, sessionId: null }, null, 200), {
-    filters: LISTED.filters, tickers: [], include_unlisted: false, sort: DEFAULT_SORT, columns: ['roe'], limit: 200, offset: 0,
+    filters: LISTED.filters, include_unlisted: false, sort: DEFAULT_SORT, columns: ['roe'], limit: 200, offset: 0,
   })
   const echo = echoOf(readScreen(ANSWER)!)!
   assert.deepEqual(screenArgs({ ...VIEW, page: 1, sessionId: echo.sessionId }, echo, 200), {
     session_id: 'scr_00000000000000aa', sort: DEFAULT_SORT, columns: ['roe'], limit: 200, offset: 200,
   })
-  // A changed list goes whole, under the same session; [] tells the server "every company again".
+  // A changed list goes whole, under the same session, and still without tickers: nobody gave any.
   const changed = screenArgs({ ...VIEW, filters: [LISTED.filters[0]!], sessionId: echo.sessionId }, echo, 200)
-  assert.deepEqual([changed.session_id, changed.filters, changed.tickers, changed.include_unlisted], ['scr_00000000000000aa', [LISTED.filters[0]], [], false])
+  assert.deepEqual([changed.session_id, changed.filters, 'tickers' in changed, changed.include_unlisted], ['scr_00000000000000aa', [LISTED.filters[0]], false, false])
   // A session that came back from the panel's state, with no answer yet to say what it holds.
-  assert.deepEqual(Object.keys(screenArgs({ ...VIEW, sessionId: 'scr_restored' }, null, 200)).sort(), ['columns', 'filters', 'include_unlisted', 'limit', 'offset', 'session_id', 'sort', 'tickers'])
+  assert.deepEqual(Object.keys(screenArgs({ ...VIEW, sessionId: 'scr_restored' }, null, 200)).sort(), ['columns', 'filters', 'include_unlisted', 'limit', 'offset', 'session_id', 'sort'])
+})
+
+test('no tickers leave the view unless the user has a list of their own: not as a parameter, not as a column', () => {
+  // What a row carries anyway says nothing as a column, whoever wrote it into the state.
+  const named = screenArgs({ ...VIEW, columns: ['name', 'ticker', 'tickers', 'sic_description', 'cik', 'net_income'], sessionId: null }, null, 200)
+  assert.deepEqual(named.columns, ['net_income'])
+  assert.equal('tickers' in named, false)
+  // A list of the user's own goes as the server's tickers parameter.
+  const own = screenArgs({ ...VIEW, tickers: ['AAPL', 'MSFT'], sessionId: null }, null, 200)
+  assert.deepEqual(own.tickers, ['AAPL', 'MSFT'])
+  // Clearing it is the one time an empty list is sent: left out, the session's list would stay.
+  const held = { ...echoOf(readScreen(ANSWER)!)!, tickers: ['AAPL', 'MSFT'] }
+  const cleared = screenArgs({ ...VIEW, tickers: [], sessionId: held.sessionId }, held, 200)
+  assert.deepEqual(cleared.tickers, [])
 })
 
 test('the session is in step with the state whatever order a filter\'s keys were written in, and however the tickers were typed', () => {
