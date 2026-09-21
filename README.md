@@ -2,7 +2,12 @@
 
 Stock screener for [Jaspers Terminal](https://github.com/JaspersAI), an open source, extensible desktop terminal for financial research.
 
-One view, `screener/screener`: a table of companies that file 10-Ks with the SEC, filtered by sector, index, exchange, and ranges on 43 fields, sorted by any column. Ask the assistant for a screen ("software companies growing revenue over 20%") and it sets the filters; ask a qualitative question ("which of these sell to the federal government?") and the view runs it over the filings and pins the matches.
+One view, `screener/screener`, on the Jaspers screener MCP server:
+
+- **A table of US SEC registrants**, one row per company, filtered on any field of a company (latest-fiscal-year fundamentals, institutional holders from Form 13F, insiders from Forms 3/4/5) with filters of the form `{field, op, value}`, sorted by any column, limited to a list of your own tickers if you give one. A line over the table shows how many companies there are, how many each filter passes on its own, and how many pass all of them. The fields, their units and their comparisons come from the server, so the view has no list of its own.
+- **Criteria in words.** Once the list is small enough (the server says how small), write criteria as yes/no questions ("Does the company depend on a sole-source supplier?") and run them: the server reads every company's newest 10-K and 10-Q against each criterion and answers pass, fail or unclear, with quotes it has verified. The table shows each company's verdict per criterion; opening a company shows the rationale and each quote as a citation with a link to the filing on sec.gov.
+
+Ask the assistant for a screen ("software companies growing revenue over 20%") and it sets the filters; agree criteria with it and it sets those and starts the run. The open company's evidence is published as text with a marker (`[^id]`) after every quote, which the assistant uses to cite the quote in the chat.
 
 ## Install
 
@@ -14,15 +19,11 @@ https://github.com/JaspersAI/plugin-screener
 
 and press Install. The app downloads the latest release, shows where it came from, and asks before any of it runs. A plugin runs code on your computer with your permissions, so install plugins only from people you trust.
 
-## Keys
-
-- **Jaspers API key**, from your Jaspers account.
-
-The app asks for it the first time the screener runs, or take it in Settings > Plugins. It is sealed in your OS keychain and never reaches the plugin or the assistant.
-
 ## Needs
 
-Nothing else.
+The Jaspers screener MCP server, reachable at `http://127.0.0.1:3333/mcp`, and its worker for qualitative runs. As of 4.0.0 that server has no authentication and listens on the local machine only, so this version asks for no key. The Jaspers API key comes back, as a secret the app seals in your OS keychain, when the server is deployed.
+
+Releases up to 3.0.1 run on the earlier hosted server (`https://analyst-api.jsprai.com/mcp/open`) with a Jaspers API key.
 
 ## Develop
 

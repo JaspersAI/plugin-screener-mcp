@@ -2,7 +2,8 @@
    plain classes, the house style by hand. Colours are the app's theme variables, so the view
    follows its light and dark, each with its light value as the fallback for an app from before the
    theme; the screener's own colours get their dark values at the end. Square everything, one grey
-   line, muted secondary text, 13px in the table, and no accent colour but the sign of a number. */
+   line, muted secondary text, 13px in the table, and no accent colour but the sign of a number
+   and the verdict of a run, which reuse the same two. */
 
 .sc-root {
   position: relative;
@@ -32,6 +33,32 @@
   border-top: 1px solid var(--jaspers-border, #e5e5e5);
 }
 
+/* The element's close button sits over the top-right corner. */
+.sc-top {
+  padding-right: 40px;
+}
+
+/* The funnel: the universe, what each filter passes on its own, what passes all of them. */
+
+.sc-funnel {
+  gap: 2px 8px;
+  color: var(--jaspers-muted-foreground, #737373);
+}
+
+.sc-funnel b {
+  color: var(--jaspers-foreground, #171717);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-step {
+  white-space: nowrap;
+}
+
+.sc-arrow {
+  color: #a3a3a3;
+}
+
 .sc-btn {
   border: 1px solid var(--jaspers-border, #e5e5e5);
   background: var(--jaspers-background, #fff);
@@ -59,6 +86,15 @@
   white-space: nowrap;
 }
 
+.sc-chip-label {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
 .sc-chip-x {
   border: 0;
   background: none;
@@ -68,8 +104,12 @@
   line-height: 1;
 }
 
-.sc-chip-x:hover {
+.sc-chip-x:hover:not(:disabled) {
   color: var(--jaspers-foreground, #171717);
+}
+
+.sc-chip-x:disabled {
+  cursor: default;
 }
 
 .sc-input {
@@ -260,12 +300,6 @@ th.sc-company {
   letter-spacing: 0.04em;
 }
 
-.sc-checks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-}
-
 .sc-check {
   display: inline-flex;
   align-items: center;
@@ -278,39 +312,55 @@ th.sc-company {
   accent-color: var(--jaspers-primary, #171717);
 }
 
-.sc-two {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 10px 16px;
+/* One filter to a row: the field, how it is compared, the value in the unit the user types. */
+
+.sc-filter {
+  margin-bottom: 6px;
 }
 
-.sc-ranges {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 4px 16px;
-}
-
-.sc-range {
+.sc-filter-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
-.sc-range-label {
-  flex: 0 0 120px;
-  color: var(--jaspers-muted-foreground, #737373);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sc-filter-field {
+  flex: 0 1 230px;
+  min-width: 0;
 }
 
-.sc-range .sc-input {
-  width: 100%;
+.sc-filter-value {
+  flex: 1 1 110px;
   min-width: 0;
+}
+
+.sc-hint {
+  margin: 2px 0 0;
+  color: var(--jaspers-muted-foreground, #737373);
+  font-size: 12px;
+}
+
+.sc-filter .sc-error,
+.sc-dialog-body > .sc-error {
+  margin: 2px 0 0;
+}
+
+.sc-tickers {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}
+
+.sc-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 2px 16px;
 }
 
 .sc-unit {
   color: #a3a3a3;
+  white-space: nowrap;
 }
 
 /* The question chip carries a sentence; its text truncates and its cross stays. */
@@ -327,18 +377,176 @@ th.sc-company {
   white-space: nowrap;
 }
 
-/* A ticker with a quote behind it from a qualitative screen; the quote is its tooltip. */
-.sc-quoted {
-  border-bottom: 1px dotted var(--jaspers-muted-foreground, #737373);
+/* The qualitative stage: the criteria and their input on the left, the run on the right. */
+
+.sc-q-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.sc-run,
+.sc-verdicts {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sc-run {
+  margin-left: auto;
+}
+
+.sc-primary {
+  border-color: var(--jaspers-foreground, #171717);
+  font-weight: 600;
+}
+
+.sc-toggle.sc-on {
+  border-color: currentColor;
+  background: var(--jaspers-muted, #f5f5f5);
+}
+
+/* A verdict is the one other thing with a colour: the sign's two, an amber, and the muted grey. */
+
+.sc-v-pass {
+  color: var(--jaspers-positive, #15803d);
+}
+
+.sc-v-fail {
+  color: var(--jaspers-negative, #b91c1c);
+}
+
+.sc-v-unclear {
+  color: #a16207;
+}
+
+.sc-v-unverified {
+  color: var(--jaspers-muted-foreground, #737373);
+  font-style: italic;
+}
+
+.sc-table th.sc-verdict-head {
+  padding: 4px 8px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sc-verdict {
+  text-align: left;
+}
+
+.sc-mark {
+  color: var(--jaspers-destructive, #dc2626);
+  font-weight: 600;
   cursor: help;
+}
+
+/* A ticker with a run's answer behind it opens that company's evidence. */
+
+.sc-ticker-open {
+  border: 0;
+  border-bottom: 1px dotted var(--jaspers-muted-foreground, #737373);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sc-table tbody tr.sc-row-open td {
+  background: var(--jaspers-muted, #f5f5f5);
+}
+
+/* The evidence pane: under the table, as tall as it needs up to under half the view. */
+
+.sc-evidence {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 45%;
+  min-height: 80px;
+  border-top: 1px solid var(--jaspers-border, #e5e5e5);
+}
+
+.sc-evidence-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--jaspers-border, #e5e5e5);
+}
+
+.sc-evidence-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 6px 10px 10px;
+}
+
+.sc-evidence-body p {
+  margin: 0 0 4px;
+  white-space: normal;
+}
+
+.sc-criterion {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--jaspers-border, #e5e5e5);
+}
+
+.sc-criterion:last-child {
+  border-bottom: 0;
+}
+
+.sc-question {
+  font-weight: 600;
+}
+
+.sc-cite {
+  margin: 6px 0;
+  padding: 4px 8px;
+  border-left: 2px solid var(--jaspers-border, #e5e5e5);
+  background: var(--jaspers-muted, #fafafa);
+}
+
+.sc-cite .sc-quote {
+  margin: 0 0 2px;
+}
+
+.sc-cite .sc-cite-foot {
+  margin: 0;
+}
+
+.sc-cite-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: var(--jaspers-muted-foreground, #737373);
+  font-size: 12px;
+}
+
+.sc-link {
+  border: 0;
+  background: none;
+  color: var(--jaspers-foreground, #171717);
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 /* Dark values for the screener's own colours: faint text a step under the muted, and, on a page
    already near black, a backdrop with more black to dim it and a shadow with more to show. */
 @media (prefers-color-scheme: dark) {
   .sc-btn:disabled,
-  .sc-unit {
+  .sc-unit,
+  .sc-arrow {
     color: #737373;
+  }
+
+  .sc-v-unclear {
+    color: #eab308;
   }
 
   .sc-dialog {

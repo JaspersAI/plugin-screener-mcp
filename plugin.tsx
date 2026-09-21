@@ -2,126 +2,136 @@ import { defineConnection, definePlugin, defineSource, defineView } from '@jaspe
 import { z } from 'zod'
 import { INSTRUCTIONS } from './instructions'
 import { ScreenerView } from './ScreenerView'
-import { summarize, type Output, type State } from './screener'
+import { DEFAULT_COLUMNS, DEFAULT_SORT, MAX_COLUMNS, MAX_CRITERIA, OPS, summarize, VERDICTS } from './screener'
 
-// The first plugin: a stock screener on the Jaspers screener MCP, its own connection, screener/jaspers,
-// with its own Jaspers API key. Four sources, one view. The schemas here are the contract with the
-// orchestrator — what it may set, and what it may read back — so they are the frontend screener's
-// filter dimensions exactly, in raw units.
+// The screener on the Jaspers screener MCP (screener-mcp), its own connection, screener/jaspers.
+// Five sources, one view. The schemas here are the contract with the orchestrator — what it may
+// set, and what it may read back — so the filters are the server's filter language exactly, in raw
+// units; which fields exist, and what each takes, is the server's to say (its guide), not ours.
 
-const Range = z.object({ min: z.number().optional(), max: z.number().optional() })
-
-const Filters = z.object({
-  search: z.string().optional(),
-  sector: z.string().optional(),
-  exchanges: z.array(z.string()).optional(),
-  indices: z.array(z.string()).optional(),
-  profitable: z.boolean().optional(),
-  positive_fcf: z.boolean().optional(),
-  pays_dividend: z.boolean().optional(),
-  include_stale: z.boolean().optional(),
-  tickers: z.array(z.string()).max(1000).optional(),
-  ranges: z.record(z.string(), Range).optional(),
+const Filter = z.object({
+  field: z.string().min(1),
+  op: z.enum(OPS),
+  /** between takes [low, high], in takes a list, is_null and not_null take none. Raw units. */
+  value: z.union([z.number(), z.string(), z.array(z.union([z.number(), z.string()]))]).optional(),
 })
 
-const Sort = z.object({ key: z.string(), dir: z.enum(['asc', 'desc']) })
+const Sort = z.object({ field: z.string().min(1), dir: z.enum(['asc', 'desc']) })
+
+/** A criterion of the qualitative stage: a question a reader of the filings can answer yes or no. The server's own shape. */
+const Criterion = z.object({
+  id: z.string().regex(/^[a-z0-9_]{1,40}$/),
+  question: z.string().min(5).max(500),
+})
 
 /**
- * A qualitative criterion forwarded in plain text. Setting `question` is all the orchestrator does:
- * the view starts the job over its current quantitative filters, polls it, and when it is done pins
- * the table to the matches. The rest of the fields are the view's own bookkeeping.
+ * The panel's qualitative run. Setting `run` to {} with `criteria` in place is all the orchestrator
+ * does: the view starts the run over its list, follows it, and shows the verdicts. The fields are
+ * the view's own bookkeeping.
  */
-const Qualitative = z.object({
-  question: z.string().min(1),
-  focusTerms: z.array(z.string()).optional(),
-  form: z.enum(['10-K', '10-Q']).optional(),
-  /** True to screen only the tickers pinned by a previous question, refining it, instead of the whole quantitative set. */
-  refine: z.boolean().optional(),
-  jobId: z.string().optional(),
+const Run = z.object({
+  id: z.string().optional(),
   status: z.enum(['running', 'done', 'error']).optional(),
-  total: z.number().optional(),
-  done: z.number().optional(),
-  matched: z.number().optional(),
-  unclear: z.number().optional(),
-  noData: z.number().optional(),
   error: z.string().optional(),
 })
 
 const StateSchema = z.object({
-  filters: Filters.default({}),
-  sort: Sort.default({ key: 'revenue', dir: 'desc' }),
+  /** Always the COMPLETE set, joined by AND. */
+  filters: z.array(Filter).default([]),
+  /** The user's own list of tickers, as the SEC writes them; empty for every company. */
+  tickers: z.array(z.string()).max(1000).default([]),
+  includeUnlisted: z.boolean().default(false),
+  sort: Sort.default(DEFAULT_SORT),
   page: z.number().int().min(0).default(0),
-  qualitative: Qualitative.optional(),
+  /** Fields shown besides the ones filtered and sorted on. */
+  columns: z.array(z.string()).max(MAX_COLUMNS).default(DEFAULT_COLUMNS),
+  /** The server's session. The view writes it; leave it alone. */
+  sessionId: z.string().nullable().default(null),
+  criteria: z.array(Criterion).max(MAX_CRITERIA).default([]),
+  run: Run.nullable().default(null),
+  /** Which verdicts the table shows once a run has results; empty for all. */
+  verdicts: z.array(z.enum(VERDICTS)).default([]),
+  /** The ticker whose evidence is open; empty for none. */
+  open: z.string().default(''),
+})
+
+const Progress = z.object({
+  total: z.number(),
+  queued: z.number(),
+  running: z.number(),
+  error: z.number(),
+  pass: z.number(),
+  fail: z.number(),
+  unclear: z.number(),
+  unverified: z.number(),
 })
 
 const OutputSchema = z.object({
-  tickers: z.array(z.string()),
+  session_id: z.string().nullable(),
+  universe: z.number(),
   count: z.number(),
-  total: z.number(),
-  filters: Filters,
+  applied_filters: z.array(Filter.extend({ matches: z.number() })),
+  tickers: z.array(z.string()),
+  unknown_tickers: z.array(z.string()),
   sort: Sort,
+  qualitative_ready: z.boolean(),
+  qualitative_max: z.number(),
   qualitative: z
-    .object({
-      question: z.string(),
-      status: z.string(),
-      total: z.number(),
-      done: z.number(),
-      matched: z.number(),
-      unclear: z.number(),
-      noData: z.number(),
-    })
+    .object({ run_id: z.string().nullable(), status: z.string(), progress: Progress.nullable(), error: z.string().optional() })
     .optional(),
+  open: z.string(),
 })
 
+// A call on a session is not a function of its arguments alone, since the session is on the server:
+// the rows of one call are never served to another.
 const screen = defineSource({
   mcp: 'jaspers',
   tool: 'screen_companies',
+  ttlMs: 0,
   description:
-    'Screen the ~7,100-company universe by fundamentals, market data, insider activity, and index membership. Filters in raw units.',
+    'Screen US SEC registrants with filters {field, op, value} on any field of a company, narrowed over several calls in one session. Raw units: USD, fractions. With a screener element on screen, set its state instead.',
 })
 
-const stats = defineSource({
+const guide = defineSource({
   mcp: 'jaspers',
-  tool: 'screener_field_stats',
-  description: 'Distribution stats for up to 8 numeric screener fields. Use before screening to pick thresholds.',
+  tool: 'get_guide',
+  ttlMs: 600_000,
+  description:
+    'How to read the screener\'s data. topic "fields": every field with its kind, unit and ops. "screening": the filter language with examples, and how the qualitative stage works. "overview": coverage, limits and freshness.',
+})
+
+const qualitativeStart = defineSource({
+  mcp: 'jaspers',
+  tool: 'start_qualitative_screen',
+  description:
+    'Start the qualitative stage over a session\'s list: every company read against criteria in words, with verified quotes. Costs model calls per company. With a screener element on screen, set its state.criteria and state.run instead; it starts and follows the run itself.',
 })
 
 const qualitative = defineSource({
   mcp: 'jaspers',
-  tool: 'screen_qualitative',
+  tool: 'get_qualitative_screen',
+  ttlMs: 0,
   description:
-    'Start an exhaustive qualitative screen: a reader judges every company matching the filters against one yes/no question, with a quote each. Returns a job_id. When a screener element is on screen, set its state.qualitative.question instead; it runs and pins the matches itself.',
+    'Progress and results of a qualitative run. With evidence: true (and tickers or verdicts set) each criterion lists the ids of its citations, and citations holds each quote once with its title and link.',
 })
 
-const qualitativeStatus = defineSource({
+const company = defineSource({
   mcp: 'jaspers',
-  tool: 'screen_qualitative_status',
-  description: 'Progress and, when done, the matched tickers with quotes, the unclear and no-data lists, for a qualitative screen job.',
+  tool: 'get_company',
+  description: 'One company by ticker: identity, latest-fiscal-year fundamentals, institutional holders, insiders, newest filings.',
 })
 
 export default definePlugin({
   id: 'screener',
-  secrets: { token: { label: 'Jaspers API key' } },
   connections: {
+    // The server has no authentication yet and listens on this machine only; the Jaspers API key
+    // comes back here, as a secret and a header, when it is deployed.
     jaspers: defineConnection({
-      url: 'https://analyst-api.jsprai.com/mcp/open',
-      auth: 'bearer',
-      headers: { Authorization: 'Bearer ${secret:token}' },
-      tools: [
-        'screen_companies',
-        'screener_field_stats',
-        'search_filing_text',
-        'list_filing_sections',
-        'fetch_filing_sections',
-        'list_insider_activity',
-        'screen_qualitative',
-        'screen_qualitative_status',
-        'get_guide',
-        'show_citations',
-      ],
+      url: 'http://127.0.0.1:3333/mcp',
+      tools: ['screen_companies', 'start_qualitative_screen', 'get_qualitative_screen', 'get_company', 'get_guide'],
     }),
   },
-  sources: { screen, stats, qualitative, 'qualitative-status': qualitativeStatus },
+  sources: { screen, guide, 'qualitative-start': qualitativeStart, qualitative, company },
   views: {
     screener: defineView(ScreenerView, {
       title: 'Screener',
@@ -129,7 +139,7 @@ export default definePlugin({
       output: OutputSchema,
       instructions: INSTRUCTIONS,
       renders: [screen],
-      summarize: (state: State, output: Output) => summarize(state, output),
+      summarize: (state, output) => summarize(state, output),
     }),
   },
 })

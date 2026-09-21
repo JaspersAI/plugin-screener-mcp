@@ -1,18 +1,49 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { useBridge, useData, usePanelState, usePublish, type PanelRef } from '@jaspers-ai/sdk'
-import { FilterBar, FilterDialog } from './Filters'
+import { useBridge, useData, usePanelState, usePublish, usePublishText, type PanelRef } from '@jaspers-ai/sdk'
+import { ColumnsDialog } from './Columns'
+import { EvidencePane, type Evidenced } from './Evidence'
+import { FilterBar, FilterDialog, type Listed } from './Filters'
+import { Funnel } from './Funnel'
+import { QualitativeBar } from './Qualitative'
 import { Table } from './Table'
-import { needsStart, qualitativeLabel, readJob, readStart, type Company, type Filters, type Qualitative, type Sort, type State } from './screener'
+import {
+  DEFAULT_COLUMNS,
+  DEFAULT_SORT,
+  echoOf,
+  evidenceText,
+  fitOutput,
+  inSync,
+  needsStart,
+  overLimit,
+  readFields,
+  readRun,
+  readRunText,
+  readScreen,
+  readStart,
+  screenArgs,
+  shownColumns,
+  type Criterion,
+  type Echo,
+  type Filter,
+  type Run,
+  type RunSnapshot,
+  type Sort,
+  type State,
+  type Verdict,
+} from './screener'
 import './styles.css'
 
-// The view. Everything it shows comes out of the panel's state: the filters and the sort go into
-// the screen source's arguments, so changing either re-runs it. What is on screen is published
+// The view. Everything it shows comes out of the panel's state: the filters, the list of tickers,
+// the sort, the page and the columns go into the screen source's arguments, so changing any re-runs
+// it, and the criteria and the run drive the qualitative stage. What is on screen is published
 // back, which is how the orchestrator reads the table without being told what is in it.
 
-/** One server page. The table scrolls it; Prev and Next ask for the next one. */
+/** One server page, the most the server sends. The table scrolls it; Prev and Next ask for the next one. */
 const PAGE = 200
-const NO_FILTERS: Filters = {}
-const DEFAULT_SORT: Sort = { key: 'revenue', dir: 'desc' }
+/** How long one status call waits on the server while a run goes on. */
+const POLL_SECONDS = 20
+const FIELDS = { topic: 'fields' }
+const NONE: never[] = []
 
 /**
  * The panel's state arrives a round trip after the frame mounts, and the screen is nothing without
@@ -36,164 +67,287 @@ export function ScreenerView({ panel }: { panel: PanelRef }): ReactElement {
 }
 
 function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State> }): ReactElement {
-  const [filters, setFilters] = usePanelState<Filters>(panel, 'filters', initial.filters ?? NO_FILTERS)
-  const [sort, setSort] = usePanelState<Sort>(panel, 'sort', initial.sort ?? DEFAULT_SORT)
-  const [page, setPage] = usePanelState<number>(panel, 'page', initial.page ?? 0)
-  const [qualitative, setQualitative] = usePanelState<Qualitative | undefined>(panel, 'qualitative', initial.qualitative)
-  const [dialogOpen, setDialogOpen] = useState(false)
   const bridge = useBridge()
-  // The latest filters, for the moment a job finishes and pins the table.
-  const latestFilters = useRef(filters)
-  latestFilters.current = filters
-  // Quotes stay here, not in state: a hundred quotes would be most of the output budget.
-  const quotes = useRef<Record<string, string>>({})
-  // The connections' statuses, so a question asked while the server is still connecting starts
-  // once it is ready instead of failing.
+  const ref = useMemo(() => ({ id: panel.id, workspaceId: panel.workspaceId }), [panel.id, panel.workspaceId])
+  // The list and the sort change together with the page, in one write (write, below), so these four are only read here.
+  const [filters] = usePanelState<Filter[]>(panel, 'filters', initial.filters ?? NONE)
+  const [tickers] = usePanelState<string[]>(panel, 'tickers', initial.tickers ?? NONE)
+  const [includeUnlisted] = usePanelState<boolean>(panel, 'includeUnlisted', initial.includeUnlisted ?? false)
+  const [sort] = usePanelState<Sort>(panel, 'sort', initial.sort ?? DEFAULT_SORT)
+  const [page, setPage] = usePanelState<number>(panel, 'page', initial.page ?? 0)
+  const [columns, setColumns] = usePanelState<string[]>(panel, 'columns', initial.columns ?? DEFAULT_COLUMNS)
+  const [criteria, setCriteria] = usePanelState<Criterion[]>(panel, 'criteria', initial.criteria ?? NONE)
+  // A key that holds null reads as its initial value, so "no run" is the initial value: a run that
+  // is in the state arrives with the first push, a moment later, and nothing acts on its absence.
+  const [run, setRun] = usePanelState<Run | null>(panel, 'run', null)
+  const [verdicts, setVerdicts] = usePanelState<Verdict[]>(panel, 'verdicts', initial.verdicts ?? NONE)
+  const [open, setOpen] = usePanelState<string>(panel, 'open', initial.open ?? '')
+  const [dialog, setDialog] = useState<'filters' | 'columns' | null>(null)
+
+  // The connections' statuses, so a run asked for while the server is still connecting starts once
+  // it is ready instead of failing.
   const connections = useData('connections') as Record<string, { status?: string }> | undefined
   const connectionsKey = JSON.stringify(Object.values(connections ?? {}).map((c) => c.status))
 
-  // A question with no job yet starts one over the quantitative filters (or the pinned tickers, to
-  // refine a previous answer). The orchestrator sets the question and nothing else.
+  // The fields are the server's: what can be filtered, how, and in which unit a number reads.
+  const guide = useData('screener/guide', FIELDS)
+  const fields = useMemo(() => readFields(guide.data), [guide.data])
+  const fieldMap = useMemo(() => new Map(fields.map((field) => [field.field, field])), [fields])
+  const fieldsError = guide.error ?? (guide.text !== undefined ? 'This server\'s guide does not list its fields as rows.' : null)
+
+  // The screen. The server keeps the list in a session, so what one call sends depends on what the
+  // session already holds (screenArgs). The arguments are made when what is asked for changes, not
+  // when an answer lands: the session id an answer brings is for the next call and must not cause one.
+  const session = useRef<string | null>(initial.sessionId ?? null)
+  const echo = useRef<Echo | null>(null)
+  const [again, setAgain] = useState(0)
+  const asked = JSON.stringify([filters, tickers, includeUnlisted, sort, page, columns, again])
+  const args = useMemo(
+    () => screenArgs({ filters, tickers, includeUnlisted, sort, page, columns, sessionId: session.current }, echo.current, PAGE),
+    [asked],
+  )
+  const { data, loading, error, meta } = useData('screener/screen', args)
+  const screen = useMemo(() => readScreen(meta), [meta])
+  const rows = data ?? NONE
+  /** The session holds the list on screen and no call is out: what a run would freeze is what the user sees. */
+  const settled = !loading && !error && screen !== null && inSync({ filters, tickers, includeUnlisted, sessionId: screen.sessionId }, echoOf(screen))
+
   useEffect(() => {
-    const q = qualitative
-    if (!q || !needsStart(q)) return
-    let live = true
-    const { tickers, ...quant } = latestFilters.current
-    const scope = q.refine && tickers?.length ? { ...quant, tickers } : quant
+    if (!screen?.sessionId) return
+    echo.current = echoOf(screen)
+    if (session.current === screen.sessionId) return
+    session.current = screen.sessionId
+    void bridge.setState(ref, ['sessionId'], screen.sessionId)
+  }, [bridge, ref, screen])
+
+  // A session the server no longer has (another server, a database set up again): start a new one.
+  useEffect(() => {
+    if (!error || !session.current || !/No screening session/.test(error)) return
+    session.current = null
+    echo.current = null
+    void bridge.setState(ref, ['sessionId'], null)
+    setAgain((n) => n + 1)
+  }, [bridge, ref, error])
+
+  // A list that got shorter than the page it is on, as when the orchestrator sets filters and not the page.
+  useEffect(() => {
+    if (screen && !loading && page > 0 && page * PAGE >= screen.count) setPage(0)
+  }, [screen, loading, page, setPage])
+
+  /**
+   * Several keys in one write, so a change of two things is one re-run and not two. The rest of the
+   * state is read from the app at that moment, not from this render: a run's id that landed a
+   * moment ago must not be written over by what the view knew before it.
+   */
+  async function write(patch: Partial<State>): Promise<void> {
+    const current = (await bridge.get(`workspaces/${ref.workspaceId}/panels/${ref.id}/state`)) as Partial<State> | undefined
+    await bridge.setState(ref, [], { ...current, ...patch })
+  }
+
+  /** A new list starts at its first page, whichever control asked for it. */
+  function changeListed(next: Listed): void {
+    void write({ ...next, page: 0 })
+  }
+
+  /** A failed start is asked for again; a run that could not be read is read again. */
+  function retry(): void {
+    if (!run?.id) {
+      setRun({})
+      return
+    }
+    setRun({ id: run.id, status: 'running' })
+    setReadAgain((n) => n + 1)
+  }
+
+  function toggleSort(field: string): void {
+    void write({ sort: sort.field === field && sort.dir === 'desc' ? { field, dir: 'asc' } : { field, dir: 'desc' }, page: 0 })
+  }
+
+  // The qualitative stage. A `run` with no id is the request (needsStart); the view starts it over
+  // the session's list, once that list is the one on screen. It costs model calls for every company,
+  // so nothing here may start one twice: the latch holds from the call until the run's id is in the state.
+  const starting = useRef(false)
+  useEffect(() => {
+    if (run === null || run.id) starting.current = false
+    if (!needsStart(criteria, run) || starting.current || !screen || !settled) return
+    if (!screen.ready || !screen.sessionId) {
+      setRun({ status: 'error', error: overLimit(screen) })
+      return
+    }
+    starting.current = true
     void (async () => {
       try {
-        const run = await bridge.runSource('screener/qualitative', {
-          filters: scope,
-          question: q.question,
-          focus_terms: q.focusTerms,
-          form: q.form,
-        })
-        if (!live) return
-        const started = readStart(run.kind === 'text' ? run.text : '')
-        setQualitative({ ...q, jobId: started.jobId, status: 'running', total: started.total, done: 0 })
+        const result = await bridge.runSource('screener/qualitative-start', { session_id: screen.sessionId, criteria })
+        const started = readStart(result.kind === 'text' ? result.text : JSON.stringify(result.meta))
+        // Written whether or not the view is still mounted: a run that was started must not be lost.
+        setRun({ id: started.runId, status: 'running' })
       } catch (err) {
-        if (!live) return
+        starting.current = false
         const text = err instanceof Error ? err.message : String(err)
-        // Not ready yet: the question stays as it is and this runs again when a connection changes.
+        // Not ready yet: the request stays as it is and this runs again when a connection changes.
         if (/connection_unavailable/.test(text) && /connecting/.test(text)) return
-        setQualitative({ ...q, status: 'error', error: text })
+        setRun({ status: 'error', error: text })
       }
     })()
-    return () => {
-      live = false
-    }
-  }, [bridge, qualitative?.question, qualitative?.jobId, qualitative?.status, connectionsKey])
+  }, [bridge, criteria, run, screen, settled, setRun, connectionsKey])
 
-  // A running job is polled until it ends. Each status call waits on the server for up to 20 s, so
-  // the loop is one request in flight at a time, never a burst.
+  // A run is followed until it is done. The first call answers at once, so a panel that comes back
+  // to a run shows where it is; each one after waits on the server for up to 20 s, so the loop is
+  // one request in flight at a time, never a burst. Results come without evidence: that is asked
+  // for one company at a time, below.
+  const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
+  const [readAgain, setReadAgain] = useState(0)
+  /** Each opened company's evidence, and the answer it was read for. */
+  const evidence = useRef(new Map<string, { key: string; found: Evidenced }>())
+  const runId = run?.id
+  const status = useRef(run?.status)
+  status.current = run?.status
   useEffect(() => {
-    const q = qualitative
-    if (!q?.jobId || q.status !== 'running') return
+    if (!runId) {
+      setSnapshot(null)
+      evidence.current.clear()
+      return
+    }
     let live = true
     void (async () => {
-      while (live) {
-        let job
+      for (let wait = 0; live; wait = POLL_SECONDS) {
+        let next: RunSnapshot
         try {
-          const run = await bridge.runSource('screener/qualitative-status', { job_id: q.jobId, wait_seconds: 20 })
+          const result = await bridge.runSource('screener/qualitative', { run_id: runId, wait_seconds: wait }, { fresh: true })
+          const found = result.kind === 'dataset' ? await bridge.datasetRows(result.datasetId) : NONE
           if (!live) return
-          job = readJob(run.kind === 'text' ? run.text : '')
+          next = result.kind === 'dataset' ? readRun(result.meta, found) : readRunText(result.text)
         } catch (err) {
-          if (live) setQualitative({ ...q, status: 'error', error: err instanceof Error ? err.message : String(err) })
+          if (!live) return
+          const text = err instanceof Error ? err.message : String(err)
+          if (/connection_unavailable/.test(text) && /connecting/.test(text)) return
+          setRun({ id: runId, status: 'error', error: text })
           return
         }
-        if (job.status === 'running') {
-          setQualitative({ ...q, status: 'running', done: job.done, total: job.total || q.total, matched: job.matches })
-          continue
-        }
-        if (job.status === 'done') {
-          quotes.current = job.quotes
-          setQualitative({
-            ...q,
-            status: 'done',
-            done: job.total || q.total,
-            total: job.total || q.total,
-            matched: job.matchedTickers.length,
-            unclear: job.unclear.length,
-            noData: job.noData.length,
-          })
-          setFilters({ ...latestFilters.current, tickers: job.matchedTickers })
-          return
-        }
-        setQualitative({ ...q, status: 'error', error: job.error ?? 'the screen failed' })
-        return
+        setSnapshot(next)
+        const now = next.status === 'done' ? 'done' : 'running'
+        if (status.current !== now) setRun({ id: runId, status: now })
+        if (next.status === 'done') return
       }
     })()
     return () => {
       live = false
     }
-  }, [bridge, qualitative?.jobId, qualitative?.status])
+  }, [bridge, runId, readAgain, setRun, connectionsKey])
 
-  /** Clearing the question also drops the pin it made. */
-  function clearQualitative(): void {
-    quotes.current = {}
-    setQualitative(undefined)
-    const { tickers: _tickers, ...rest } = latestFilters.current
-    setFilters(rest)
-  }
+  // The open company's evidence: one call for that company, when its row is opened and again when
+  // its answer changes. Quotes stay here, not in state: a company's worth is most of the output
+  // budget, and a list's worth is far past it.
+  const [shown, setShown] = useState<{ ticker: string; found: Evidenced | null; error: string | null } | null>(null)
+  const openResult = open ? snapshot?.results.find((result) => result.ticker === open) : undefined
+  const openKey = open && runId && snapshot ? `${runId}|${open}|${openResult?.status ?? ''}|${openResult?.verdict ?? ''}` : ''
+  useEffect(() => {
+    if (!openKey || !runId) {
+      setShown(null)
+      return
+    }
+    const kept = evidence.current.get(open)
+    setShown({ ticker: open, found: kept?.found ?? null, error: null })
+    if (kept?.key === openKey) return
+    let live = true
+    void (async () => {
+      try {
+        const result = await bridge.runSource('screener/qualitative', { run_id: runId, tickers: [open], evidence: true }, { fresh: true })
+        const found = result.kind === 'dataset' ? await bridge.datasetRows(result.datasetId) : NONE
+        if (!live) return
+        const read = result.kind === 'dataset' ? readRun(result.meta, found) : readRunText(result.text)
+        const company = read.results[0]
+        if (!company) throw new Error(`The run has no company with the ticker ${open}.`)
+        evidence.current.set(open, { key: openKey, found: { company, citations: read.citations } })
+        setShown({ ticker: open, found: { company, citations: read.citations }, error: null })
+      } catch (err) {
+        if (live) setShown({ ticker: open, found: null, error: err instanceof Error ? err.message : String(err) })
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [bridge, runId, open, openKey])
 
-  // The sort rides inside the filters: the server sorts every match, and a page of one cannot.
-  const { data, loading, error, meta } = useData('screener/screen', {
-    filters: { ...filters, sort },
-    limit: PAGE,
-    offset: page * PAGE,
-  })
+  const results = useMemo(() => new Map((snapshot?.results ?? []).map((result) => [result.cik, result])), [snapshot])
+  const visible = useMemo(() => {
+    if (!snapshot || verdicts.length === 0) return rows
+    return rows.filter((row) => {
+      const verdict = results.get(Number(row.cik))?.verdict
+      return verdict !== null && verdict !== undefined && verdicts.includes(verdict)
+    })
+  }, [rows, snapshot, results, verdicts])
 
-  const rows = (data ?? []) as Company[]
-  const total = Number(meta['count'] ?? data?.length ?? 0)
-  const tickers = rows.map((row) => row.ticker).filter((ticker): ticker is string => !!ticker)
   usePublish(panel, {
-    tickers,
-    count: rows.length,
-    total,
-    filters,
-    sort,
-    qualitative: qualitative
-      ? {
-          question: qualitative.question,
-          status: qualitative.status ?? 'starting',
-          total: qualitative.total ?? 0,
-          done: qualitative.done ?? 0,
-          matched: qualitative.matched ?? 0,
-          unclear: qualitative.unclear ?? 0,
-          noData: qualitative.noData ?? 0,
-        }
-      : undefined,
+    ...fitOutput({
+      session_id: screen?.sessionId ?? null,
+      universe: screen?.universe ?? 0,
+      count: screen?.count ?? 0,
+      applied_filters: screen?.applied ?? [],
+      tickers: visible.map((row) => row.ticker).filter((ticker): ticker is string => typeof ticker === 'string'),
+      unknown_tickers: screen?.unknownTickers ?? [],
+      sort,
+      qualitative_ready: screen?.ready ?? false,
+      qualitative_max: screen?.max ?? 0,
+      qualitative: run
+        ? { run_id: run.id ?? null, status: run.status ?? 'starting', progress: snapshot?.progress ?? null, ...(run.error ? { error: run.error } : {}) }
+        : undefined,
+      open,
+    }),
   })
+  // The open company's evidence as text, for a model to quote: every quote carries its [^id].
+  usePublishText(panel, shown?.found && runId ? evidenceText(shown.found.company, snapshot?.criteria ?? criteria, shown.found.citations, runId) : null)
 
-  const exchanges = useMemo(() => countExchanges((data ?? []) as Company[]), [data])
-  const hasNext = (page + 1) * PAGE < total
-
-  /** A new screen starts at its first page, whichever control asked for it. */
-  function change(next: Filters): void {
-    setFilters(next)
-    if (page !== 0) setPage(0)
-  }
-
-  function toggleSort(key: string): void {
-    setSort(sort.key === key && sort.dir === 'desc' ? { key, dir: 'asc' } : { key, dir: 'desc' })
-    if (page !== 0) setPage(0)
-  }
+  const hasNext = (page + 1) * PAGE < (screen?.count ?? 0)
+  const listed: Listed = { filters, tickers, includeUnlisted }
 
   return (
     <div className="sc-root">
-      <div className="sc-bar">
-        <FilterBar
-          filters={filters}
-          onChange={change}
-          onOpen={() => setDialogOpen(true)}
-          qualitative={qualitative ? { label: qualitativeLabel(qualitative), onClear: clearQualitative } : undefined}
-        />
+      <div className="sc-bar sc-top">
+        <FilterBar listed={listed} fields={fieldMap} onChange={changeListed} onOpen={() => setDialog('filters')} onColumns={() => setDialog('columns')} />
         <span className="sc-count">
-          {rows.length} shown of {total}
+          {visible.length} shown of {(screen?.count ?? 0).toLocaleString('en-US')}
         </span>
       </div>
 
-      <Table rows={rows} sort={sort} onSort={toggleSort} loading={loading && data === undefined} quotes={quotes.current} />
+      <Funnel screen={screen} fields={fieldMap} />
+
+      <QualitativeBar
+        criteria={criteria}
+        onCriteria={setCriteria}
+        run={run}
+        snapshot={snapshot}
+        screen={screen}
+        settled={settled}
+        verdicts={verdicts}
+        onVerdicts={setVerdicts}
+        onRun={() => setRun({})}
+        onRetry={retry}
+        onClear={() => void write({ run: null, verdicts: [], open: '' })}
+      />
+
+      <Table
+        rows={visible}
+        columns={shownColumns(filters, sort, columns)}
+        fields={fieldMap}
+        sort={sort}
+        onSort={toggleSort}
+        loading={loading && data === undefined}
+        run={snapshot ? { criteria: snapshot.criteria, results } : null}
+        open={open}
+        onOpen={(ticker) => setOpen(ticker === open ? '' : ticker)}
+      />
+
+      {open && runId && (
+        <EvidencePane
+          ticker={open}
+          evidence={shown?.ticker === open ? shown.found : null}
+          error={shown?.ticker === open ? shown.error : null}
+          questions={snapshot?.criteria ?? criteria}
+          onClose={() => setOpen('')}
+          onLink={(url) => void bridge.openLink(url)}
+        />
+      )}
 
       <div className="sc-bar sc-foot">
         <button type="button" className="sc-btn" disabled={page === 0} onClick={() => setPage(page - 1)}>
@@ -203,33 +357,36 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
           Next
         </button>
         <span className="sc-status">Page {page + 1}</span>
-        {/* The source's own words, which is how "needs a key. Open Connections." reaches the user. */}
+        {/* The source's own words, which is how a refused filter or a server that is not running reaches the user. */}
         <span className={error ? 'sc-error' : 'sc-status'} style={{ marginLeft: 'auto' }}>
           {error ?? (loading ? 'Loading…' : '')}
         </span>
       </div>
 
-      {dialogOpen && (
+      {dialog === 'filters' && (
         <FilterDialog
-          filters={filters}
-          exchanges={exchanges}
+          listed={listed}
+          fields={fields}
+          fieldsError={fieldsError}
           onApply={(next) => {
-            change(next)
-            setDialogOpen(false)
+            changeListed(next)
+            setDialog(null)
           }}
-          onClose={() => setDialogOpen(false)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'columns' && (
+        <ColumnsDialog
+          columns={columns}
+          fields={fields}
+          fieldsError={fieldsError}
+          onApply={(next) => {
+            setColumns(next)
+            setDialog(null)
+          }}
+          onClose={() => setDialog(null)}
         />
       )}
     </div>
   )
-}
-
-/** The exchanges in the rows on screen, commonest first, for the dialog's checkboxes. */
-function countExchanges(rows: Company[]): [string, number][] {
-  const counts = new Map<string, number>()
-  for (const row of rows) {
-    if (typeof row.exchange !== 'string' || !row.exchange) continue
-    counts.set(row.exchange, (counts.get(row.exchange) ?? 0) + 1)
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1])
 }

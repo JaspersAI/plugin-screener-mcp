@@ -1,102 +1,143 @@
-import { useState, type ReactElement } from 'react'
+import { useState, type KeyboardEvent, type ReactElement } from 'react'
 import {
-  FLAGS,
-  INDEX_LABELS,
-  RANGE_FIELDS,
-  SECTORS,
-  UNIT_LABEL,
-  filterChips,
-  fromDisplay,
-  toDisplay,
-  type Filters,
-  type Range,
+  fieldLabel,
+  filterText,
+  fromDraft,
+  groupFields,
+  opText,
+  readTickers,
+  toDraft,
+  unitHint,
+  type Draft,
+  type Field,
+  type Filter,
+  type Op,
 } from './screener'
 
-// What is filtered, and how it is changed by hand: one chip per active dimension with a cross, and
-// a dialog over the view for the rest. The dialog edits a draft and writes the whole filters object
-// once, on Apply, because the orchestrator writes it the same way — one value, one re-run.
+// What is filtered, and how it is changed by hand: one chip per filter with a cross, and a dialog
+// over the view to add and edit them. The dialog edits a draft and writes the list once, on Apply,
+// because the orchestrator writes it the same way — the complete set, one re-run. Which fields
+// there are, and what each takes, comes from the server's guide.
 
-interface BarProps {
-  /** The question chip: its words, and what clearing it does. */
-  qualitative?: { label: string; onClear: () => void }
-  filters: Filters
-  onChange: (next: Filters) => void
-  onOpen: () => void
+/** The part of the state that says which companies are on the list. */
+export interface Listed {
+  filters: Filter[]
+  tickers: string[]
+  includeUnlisted: boolean
 }
 
-export function FilterBar({ filters, onChange, onOpen, qualitative }: BarProps): ReactElement {
-  const chips = filterChips(filters)
+interface BarProps {
+  listed: Listed
+  fields: Map<string, Field>
+  onChange: (next: Listed) => void
+  /** Opens the dialog, from its button or from a chip: a filter is edited where the rest are. */
+  onOpen: () => void
+  onColumns: () => void
+}
+
+export function FilterBar({ listed, fields, onChange, onOpen, onColumns }: BarProps): ReactElement {
+  const { filters, tickers, includeUnlisted } = listed
   return (
     <>
       <button type="button" className="sc-btn" onClick={onOpen}>
         Filters
       </button>
-      {chips.map((chip) => (
-        <span key={chip.id} className="sc-chip">
-          {chip.label}
-          <button
-            type="button"
-            className="sc-chip-x"
-            aria-label={`Remove ${chip.label}`}
-            onClick={() => onChange(chip.remove(filters))}
-          >
-            ×
-          </button>
-        </span>
-      ))}
-      {qualitative && (
-        <span className="sc-chip sc-q" title={qualitative.label}>
-          <span className="sc-q-text">{qualitative.label}</span>
-          <button type="button" className="sc-chip-x" aria-label="Clear the question" onClick={qualitative.onClear}>
-            ×
-          </button>
-        </span>
+      <button type="button" className="sc-btn" onClick={onColumns}>
+        Columns
+      </button>
+      {tickers.length > 0 && (
+        <Chip
+          label={tickers.length <= 3 ? tickers.join(', ') : `Own list of ${tickers.length}`}
+          onOpen={onOpen}
+          onRemove={() => onChange({ ...listed, tickers: [] })}
+        />
       )}
+      {filters.map((filter, index) => (
+        <Chip
+          key={`${index}:${filter.field}`}
+          label={filterText(filter, fields.get(filter.field))}
+          onOpen={onOpen}
+          onRemove={() => onChange({ ...listed, filters: filters.filter((_, i) => i !== index) })}
+        />
+      ))}
+      {includeUnlisted && <Chip label="Incl. unlisted" onOpen={onOpen} onRemove={() => onChange({ ...listed, includeUnlisted: false })} />}
     </>
   )
 }
 
+function Chip({ label, onOpen, onRemove }: { label: string; onOpen: () => void; onRemove: () => void }): ReactElement {
+  return (
+    <span className="sc-chip">
+      <button type="button" className="sc-chip-label" onClick={onOpen} title="Edit">
+        {label}
+      </button>
+      <button type="button" className="sc-chip-x" aria-label={`Remove ${label}`} onClick={onRemove}>
+        ×
+      </button>
+    </span>
+  )
+}
+
 interface DialogProps {
-  filters: Filters
-  /** The exchanges in the rows on screen, and how many of each, so the list is never speculative. */
-  exchanges: [string, number][]
-  onApply: (next: Filters) => void
+  listed: Listed
+  fields: Field[]
+  /** Why there are no fields to pick from, when there are none. */
+  fieldsError: string | null
+  onApply: (next: Listed) => void
   onClose: () => void
 }
 
-type RangeDraft = Record<string, { min: string; max: string }>
+/** A row of the dialog: the filter as typed, and the filter it came from while nobody has touched it. */
+interface Row extends Draft {
+  original?: Filter
+}
 
-export function FilterDialog({ filters, exchanges, onApply, onClose }: DialogProps): ReactElement {
+const NEW_ROW: Row = { field: '', op: 'gte', a: '', b: '' }
+
+export function FilterDialog({ listed, fields, fieldsError, onApply, onClose }: DialogProps): ReactElement {
+  const byName = new Map(fields.map((field) => [field.field, field]))
   // The dialog is mounted when it opens, so the draft is seeded once, here, rather than in an effect.
-  const [search, setSearch] = useState(filters.search ?? '')
-  const [sector, setSector] = useState(filters.sector ?? '')
-  const [exchangeSel, setExchangeSel] = useState<string[]>(filters.exchanges ?? [])
-  const [indexSel, setIndexSel] = useState<string[]>(filters.indices ?? [])
-  const [flags, setFlags] = useState<string[]>(FLAGS.filter((f) => filters[f.key] === true).map((f) => f.key))
-  const [ranges, setRanges] = useState<RangeDraft>(() => seedRanges(filters))
+  const [rows, setRows] = useState<Row[]>(() => listed.filters.map((filter) => ({ ...toDraft(filter, byName.get(filter.field)), original: filter })))
+  const [tickers, setTickers] = useState(listed.tickers.join(' '))
+  const [includeUnlisted, setIncludeUnlisted] = useState(listed.includeUnlisted)
+  const [errors, setErrors] = useState<Record<number, string>>({})
+  const groups = groupFields(fields.filter((field) => field.ops.length > 0))
+
+  function change(index: number, patch: Partial<Draft>): void {
+    setRows((previous) => previous.map((row, i) => (i === index ? { ...row, ...patch, original: undefined } : row)))
+    setErrors((previous) => ({ ...previous, [index]: '' }))
+  }
+
+  /** A new field keeps the op when it takes it, and never the value: a percentage is not a dollar figure. */
+  function changeField(index: number, name: string): void {
+    const ops = byName.get(name)?.ops ?? []
+    const op = rows[index]!.op
+    change(index, { field: name, op: ops.includes(op) ? op : (ops[0] ?? 'eq'), a: '', b: '' })
+  }
 
   function apply(): void {
-    const next: Filters = {}
-    if (search.trim()) next.search = search.trim()
-    if (sector) next.sector = sector
-    if (exchangeSel.length > 0) next.exchanges = exchangeSel
-    if (indexSel.length > 0) next.indices = indexSel
-    for (const flag of FLAGS) if (flags.includes(flag.key)) next[flag.key] = true
-    // A ticker pin comes from a screen the orchestrator ran; the dialog does not edit it, so it rides along.
-    if (filters.tickers?.length) next.tickers = filters.tickers
-    const out: Record<string, Range> = {}
-    for (const field of RANGE_FIELDS) {
-      const draft = ranges[field.field]
-      if (!draft) continue
-      const range: Range = {}
-      const min = Number.parseFloat(draft.min)
-      const max = Number.parseFloat(draft.max)
-      if (draft.min !== '' && Number.isFinite(min)) range.min = fromDisplay(min, field.kind)
-      if (draft.max !== '' && Number.isFinite(max)) range.max = fromDisplay(max, field.kind)
-      if (range.min !== undefined || range.max !== undefined) out[field.field] = range
-    }
-    if (Object.keys(out).length > 0) next.ranges = out
-    onApply(next)
+    const filters: Filter[] = []
+    const found: Record<number, string> = {}
+    rows.forEach((row, index) => {
+      // A row nobody filled in is not a filter, and one nobody touched is the filter it was: the
+      // orchestrator may have set one on a field the guide does not list, or the guide may be out.
+      if (!row.field) return
+      if (row.original) {
+        filters.push(row.original)
+        return
+      }
+      const read = fromDraft(row, byName.get(row.field))
+      if ('error' in read) found[index] = read.error
+      else filters.push(read.filter)
+    })
+    setErrors(found)
+    if (Object.keys(found).length > 0) return
+    onApply({ filters, tickers: readTickers(tickers), includeUnlisted })
+  }
+
+  /** A form never submits in a view's frame, so Enter is read here. */
+  function onEnter(event: KeyboardEvent): void {
+    if (event.key === 'Enter') apply()
   }
 
   return (
@@ -110,112 +151,110 @@ export function FilterDialog({ filters, exchanges, onApply, onClose }: DialogPro
         </div>
 
         <div className="sc-dialog-body">
-          <div className="sc-section sc-two">
-            <div>
-              <label className="sc-label" htmlFor="sc-search">
-                Search (ticker / name / industry)
-              </label>
-              <input
-                id="sc-search"
-                className="sc-input"
-                style={{ width: '100%' }}
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder='e.g. "software" or NVDA'
-              />
-            </div>
-            <div>
-              <label className="sc-label" htmlFor="sc-sector">
-                Sector
-              </label>
-              <select
-                id="sc-sector"
-                className="sc-input"
-                style={{ width: '100%' }}
-                value={sector}
-                onChange={(event) => setSector(event.target.value)}
-              >
-                <option value="">All sectors</option>
-                {SECTORS.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
           <div className="sc-section">
-            <span className="sc-label">Index membership (any of)</span>
-            <div className="sc-checks">
-              {Object.entries(INDEX_LABELS).map(([code, label]) => (
-                <Check
-                  key={code}
-                  label={label}
-                  checked={indexSel.includes(code)}
-                  onChange={(on) => setIndexSel(toggle(indexSel, code, on))}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="sc-section sc-two">
-            <div>
-              <span className="sc-label">Exchange</span>
-              <div className="sc-checks" style={{ flexDirection: 'column' }}>
-                {exchanges.length === 0 && <span className="sc-status">None in these rows</span>}
-                {exchanges.map(([name, count]) => (
-                  <Check
-                    key={name}
-                    label={`${name} (${count})`}
-                    checked={exchangeSel.includes(name)}
-                    onChange={(on) => setExchangeSel(toggle(exchangeSel, name, on))}
-                  />
-                ))}
-              </div>
-            </div>
-            <div>
-              <span className="sc-label">Toggles</span>
-              <div className="sc-checks" style={{ flexDirection: 'column' }}>
-                {FLAGS.map((flag) => (
-                  <Check
-                    key={String(flag.key)}
-                    label={flag.label}
-                    checked={flags.includes(flag.key)}
-                    onChange={(on) => setFlags(toggle(flags, flag.key, on))}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="sc-section">
-            <span className="sc-label">Ranges</span>
-            <div className="sc-ranges">
-              {RANGE_FIELDS.map((field) => (
-                <div key={field.field} className="sc-range">
-                  <span className="sc-range-label" title={field.label}>
-                    {field.label} <span className="sc-unit">({UNIT_LABEL[field.kind]})</span>
-                  </span>
-                  {(['min', 'max'] as const).map((side) => (
-                    <input
-                      key={side}
+            <span className="sc-label">Filters (a company passes every one)</span>
+            {fields.length === 0 && <p className="sc-error">{fieldsError ?? 'The server sent no list of fields.'}</p>}
+            {rows.map((row, index) => {
+              const field = byName.get(row.field)
+              const valued = row.op !== 'is_null' && row.op !== 'not_null'
+              return (
+                <div key={index} className="sc-filter">
+                  <div className="sc-filter-row">
+                    <select
+                      className="sc-input sc-filter-field"
+                      aria-label="Field"
+                      value={row.field}
+                      title={field?.description}
+                      onChange={(event) => changeField(index, event.target.value)}
+                    >
+                      <option value="">Pick a field…</option>
+                      {/* A filter on a field the guide does not list still shows what it is. */}
+                      {row.field && !field && <option value={row.field}>{row.field}</option>}
+                      {groups.map(([group, members]) => (
+                        <optgroup key={group} label={group}>
+                          {members.map((member) => (
+                            <option key={member.field} value={member.field}>
+                              {fieldLabel(member.field)}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <select
                       className="sc-input"
-                      type="number"
-                      placeholder={side}
-                      aria-label={`${field.label} ${side}`}
-                      value={ranges[field.field]?.[side] ?? ''}
-                      onChange={(event) =>
-                        setRanges((previous) => ({
-                          ...previous,
-                          [field.field]: { ...(previous[field.field] ?? { min: '', max: '' }), [side]: event.target.value },
-                        }))
-                      }
-                    />
-                  ))}
+                      aria-label="Comparison"
+                      value={row.op}
+                      onChange={(event) => change(index, { op: event.target.value as Op })}
+                    >
+                      {(field?.ops ?? [row.op]).map((op) => (
+                        <option key={op} value={op}>
+                          {opText(op)}
+                        </option>
+                      ))}
+                    </select>
+                    {valued && (
+                      <input
+                        className="sc-input sc-filter-value"
+                        aria-label={row.op === 'between' ? 'From' : 'Value'}
+                        placeholder={row.op === 'in' ? 'values, separated by commas' : row.op === 'between' ? 'from' : 'value'}
+                        value={row.a}
+                        onChange={(event) => change(index, { a: event.target.value })}
+                        onKeyDown={onEnter}
+                      />
+                    )}
+                    {row.op === 'between' && (
+                      <input
+                        className="sc-input sc-filter-value"
+                        aria-label="To"
+                        placeholder="to"
+                        value={row.b}
+                        onChange={(event) => change(index, { b: event.target.value })}
+                        onKeyDown={onEnter}
+                      />
+                    )}
+                    {valued && field && <span className="sc-unit">{unitHint(field)}</span>}
+                    <button
+                      type="button"
+                      className="sc-chip-x"
+                      style={{ marginLeft: 'auto' }}
+                      aria-label="Remove this filter"
+                      onClick={() => {
+                        setRows((previous) => previous.filter((_, i) => i !== index))
+                        setErrors({})
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {field && <p className="sc-hint">{field.description}</p>}
+                  {errors[index] && <p className="sc-error">{errors[index]}</p>}
                 </div>
-              ))}
-            </div>
+              )
+            })}
+            <button type="button" className="sc-btn" disabled={fields.length === 0} onClick={() => setRows((previous) => [...previous, NEW_ROW])}>
+              Add a filter
+            </button>
+          </div>
+
+          <div className="sc-section">
+            <label className="sc-label" htmlFor="sc-tickers">
+              Own list: screen only these tickers, as the SEC writes them (BRK-B)
+            </label>
+            <textarea
+              id="sc-tickers"
+              className="sc-input sc-tickers"
+              rows={2}
+              value={tickers}
+              onChange={(event) => setTickers(event.target.value)}
+              placeholder="Empty for every company. AAPL MSFT NVDA …"
+            />
+          </div>
+
+          <div className="sc-section">
+            <label className="sc-check">
+              <input type="checkbox" checked={includeUnlisted} onChange={(event) => setIncludeUnlisted(event.target.checked)} />
+              <span>Include companies without a ticker (trusts, non-traded REITs, shells)</span>
+            </label>
           </div>
         </div>
 
@@ -230,38 +269,4 @@ export function FilterDialog({ filters, exchanges, onApply, onClose }: DialogPro
       </div>
     </div>
   )
-}
-
-function Check({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string
-  checked: boolean
-  onChange: (on: boolean) => void
-}): ReactElement {
-  return (
-    <label className="sc-check">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-      <span>{label}</span>
-    </label>
-  )
-}
-
-/** Every range field gets a row, filled in from the filters in the unit the user types. */
-function seedRanges(filters: Filters): RangeDraft {
-  const draft: RangeDraft = {}
-  for (const field of RANGE_FIELDS) {
-    const range = filters.ranges?.[field.field]
-    draft[field.field] = {
-      min: range?.min === undefined ? '' : String(toDisplay(range.min, field.kind)),
-      max: range?.max === undefined ? '' : String(toDisplay(range.max, field.kind)),
-    }
-  }
-  return draft
-}
-
-function toggle(list: string[], value: string, on: boolean): string[] {
-  return on ? [...list, value] : list.filter((item) => item !== value)
 }
