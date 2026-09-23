@@ -4,7 +4,7 @@ import { INSTRUCTIONS } from './instructions'
 import { ScreenerView } from './ScreenerView'
 import { DEFAULT_COLUMNS, DEFAULT_SORT, MAX_COLUMNS, MAX_CRITERIA, OPS, summarize, VERDICTS } from './screener'
 
-// The screener on the Jaspers screener MCP (screener-mcp), its own connection, screener/jaspers.
+// The screener on the Jaspers screener MCP (screener-mcp), its own connection, screener-mcp/jaspers.
 // Five sources, one view. The schemas here are the contract with the orchestrator — what it may
 // set, and what it may read back — so the filters are the server's filter language exactly, in raw
 // units; which fields exist, and what each takes, is the server's to say (its guide), not ours.
@@ -128,12 +128,13 @@ const company = defineSource({
 })
 
 export default definePlugin({
-  id: 'screener',
+  id: 'screener-mcp',
+  secrets: { token: { label: 'Screener MCP key' } },
   connections: {
-    // The server has no authentication yet and listens on this machine only; the Jaspers API key
-    // comes back here, as a secret and a header, when it is deployed.
+    // The key goes in the URL because that is where the server reads it: claude.ai's connector can
+    // send no header, so the server takes ?key= from every caller. The app fills it in, sealed.
     jaspers: defineConnection({
-      url: 'http://127.0.0.1:3333/mcp',
+      url: 'https://s.jsprai.com/mcp?key=${secret:token}',
       tools: ['screen_companies', 'start_qualitative_screen', 'get_qualitative_screen', 'get_company', 'get_guide'],
     }),
   },

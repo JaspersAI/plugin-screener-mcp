@@ -92,7 +92,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   const connectionsKey = JSON.stringify(Object.values(connections ?? {}).map((c) => c.status))
 
   // The fields are the server's: what can be filtered, how, and in which unit a number reads.
-  const guide = useData('screener/guide', FIELDS)
+  const guide = useData('screener-mcp/guide', FIELDS)
   const fields = useMemo(() => readFields(guide.data), [guide.data])
   const fieldMap = useMemo(() => new Map(fields.map((field) => [field.field, field])), [fields])
   const fieldsError = guide.error ?? (guide.text !== undefined ? 'This server\'s guide does not list its fields as rows.' : null)
@@ -108,7 +108,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     () => screenArgs({ filters, tickers, includeUnlisted, sort, page, columns, sessionId: session.current }, echo.current, PAGE),
     [asked],
   )
-  const { data, loading, error, meta } = useData('screener/screen', args)
+  const { data, loading, error, meta } = useData('screener-mcp/screen', args)
   const screen = useMemo(() => readScreen(meta), [meta])
   const rows = data ?? NONE
   /** The session holds the list on screen and no call is out: what a run would freeze is what the user sees. */
@@ -179,7 +179,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     starting.current = true
     void (async () => {
       try {
-        const result = await bridge.runSource('screener/qualitative-start', { session_id: screen.sessionId, criteria })
+        const result = await bridge.runSource('screener-mcp/qualitative-start', { session_id: screen.sessionId, criteria })
         const started = readStart(result.kind === 'text' ? result.text : JSON.stringify(result.meta))
         // Written whether or not the view is still mounted: a run that was started must not be lost.
         setRun({ id: started.runId, status: 'running' })
@@ -217,7 +217,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
       for (let wait = 0; live; wait = POLL_SECONDS) {
         let next: RunSnapshot
         try {
-          const result = await bridge.runSource('screener/qualitative', { run_id: runId, wait_seconds: wait }, { fresh: true })
+          const result = await bridge.runSource('screener-mcp/qualitative', { run_id: runId, wait_seconds: wait }, { fresh: true })
           const found = result.kind === 'dataset' ? await bridge.datasetRows(result.datasetId) : NONE
           if (!live) return
           next = result.kind === 'dataset' ? readRun(result.meta, found) : readRunText(result.text)
@@ -259,7 +259,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     let live = true
     void (async () => {
       try {
-        const result = await bridge.runSource('screener/qualitative', { run_id: runId, tickers: [open], evidence: true }, { fresh: true })
+        const result = await bridge.runSource('screener-mcp/qualitative', { run_id: runId, tickers: [open], evidence: true }, { fresh: true })
         const found = result.kind === 'dataset' ? await bridge.datasetRows(result.datasetId) : NONE
         if (!live) return
         const read = result.kind === 'dataset' ? readRun(result.meta, found) : readRunText(result.text)

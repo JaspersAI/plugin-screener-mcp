@@ -274,7 +274,7 @@ test('a run starts when it is asked for and the view has not already started it'
   assert.equal(needsStart(criteria, { status: 'done' }), true)
   assert.equal(needsStart(criteria, { id: 'run_00000000000000bb', status: 'running' }), false)
   assert.equal(needsStart(criteria, { id: 'run_00000000000000bb', status: 'done' }), false)
-  assert.equal(needsStart(criteria, { status: 'error', error: 'screener/jaspers is connecting' }), false)
+  assert.equal(needsStart(criteria, { status: 'error', error: 'screener-mcp/jaspers is connecting' }), false)
   // Criteria alone never start a run: it costs model calls for every company.
   assert.equal(needsStart(criteria, null), false)
   assert.equal(needsStart(criteria, undefined), false)

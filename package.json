@@ -1,5 +1,5 @@
 {
-  "name": "screener",
+  "name": "screener-mcp",
   "version": "4.0.0",
   "description": "A stock screener for Jaspers Terminal: US SEC registrants by fundamentals, holders and insiders, then criteria in words read against every company's filings, with cited quotes.",
   "license": "MIT",
@@ -7,7 +7,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JaspersAI/plugin-screener.git"
+    "url": "git+https://github.com/JaspersAI/plugin-screener-mcp.git"
   },
   "jaspers": {
     "sdk": "0.1.0"

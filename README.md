@@ -1,8 +1,8 @@
-# plugin-screener
+# plugin-screener-mcp
 
 Stock screener for [Jaspers Terminal](https://github.com/JaspersAI), an open source, extensible desktop terminal for financial research.
 
-One view, `screener/screener`, on the Jaspers screener MCP server:
+One view, `screener-mcp/screener`, on the Jaspers screener MCP server:
 
 - **A table of US SEC registrants**, one row per company, filtered on any field of a company (latest-fiscal-year fundamentals, institutional holders from Form 13F, insiders from Forms 3/4/5) with filters of the form `{field, op, value}`, sorted by any column, limited to a list of your own tickers if you give one. A line over the table shows how many companies there are, how many each filter passes on its own, and how many pass all of them. The fields, their units and their comparisons come from the server, so the view has no list of its own.
 - **Criteria in words.** Once the list is small enough (the server says how small), write criteria as yes/no questions ("Does the company depend on a sole-source supplier?") and run them: the server reads every company's newest 10-K and 10-Q against each criterion and answers pass, fail or unclear, with quotes it has verified. The table shows each company's verdict per criterion; opening a company shows the rationale and each quote as a citation with a link to the filing on sec.gov.
@@ -14,22 +14,22 @@ Ask the assistant for a screen ("software companies growing revenue over 20%") a
 In Jaspers Terminal, open Settings > Plugins, paste
 
 ```
-https://github.com/JaspersAI/plugin-screener
+https://github.com/JaspersAI/plugin-screener-mcp
 ```
 
 and press Install. The app downloads the latest release, shows where it came from, and asks before any of it runs. A plugin runs code on your computer with your permissions, so install plugins only from people you trust.
 
 ## Needs
 
-The Jaspers screener MCP server, reachable at `http://127.0.0.1:3333/mcp`, and its worker for qualitative runs. As of 4.0.0 that server has no authentication and listens on the local machine only, so this version asks for no key. The Jaspers API key comes back, as a secret the app seals in your OS keychain, when the server is deployed.
+A screener MCP key. The plugin reaches the Jaspers screener MCP server at `https://s.jsprai.com/mcp` and passes the key the way the server takes it, as `?key=`; the app asks for it once and keeps it sealed in your OS keychain.
 
-Releases up to 3.0.1 run on the earlier hosted server (`https://analyst-api.jsprai.com/mcp/open`) with a Jaspers API key.
+The earlier hosted server (`https://analyst-api.jsprai.com/mcp/open`, with a Jaspers API key) is [plugin-screener](https://github.com/JaspersAI/plugin-screener)'s. The two have different ids, `screener-mcp` and `screener`, so they install side by side; this repo shares that one's history up to 3.0.1.
 
 ## Develop
 
 ```sh
-git clone https://github.com/JaspersAI/plugin-screener.git ~/Jaspers/plugins/screener
-cd ~/Jaspers/plugins/screener
+git clone https://github.com/JaspersAI/plugin-screener-mcp.git ~/Jaspers/plugins/screener-mcp
+cd ~/Jaspers/plugins/screener-mcp
 npm install
 npm run typecheck
 npm test
@@ -46,7 +46,7 @@ npm version patch
 git push --follow-tags
 ```
 
-The Release workflow checks the plugin and attaches `screener-<version>.zip` to a GitHub release. Update in Settings > Plugins picks it up.
+The Release workflow checks the plugin and attaches `screener-mcp-<version>.zip` to a GitHub release. Update in Settings > Plugins picks it up.
 
 ## License
 

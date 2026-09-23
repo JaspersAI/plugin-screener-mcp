@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-The `screener` plugin for Jaspers Terminal, written against `@jaspers-ai/sdk`. The app loads it from a folder in `~/Jaspers/plugins/screener` (a clone of this repo, or an installed release) and rebuilds it on save. How plugins work, the SDK, and the app's side are in the terminal repo's CLAUDE.md. Version 4 runs on the screener MCP server (screener-mcp); versions up to 3.0.1 ran on the earlier hosted one, with another filter shape and other tools.
+The `screener-mcp` plugin for Jaspers Terminal, written against `@jaspers-ai/sdk`. The app loads it from a folder in `~/Jaspers/plugins/screener-mcp` (a clone of this repo, or an installed release) and rebuilds it on save. How plugins work, the SDK, and the app's side are in the terminal repo's CLAUDE.md. It runs on the screener MCP server (screener-mcp). The earlier hosted server, with another filter shape and other tools, is plugin-screener's: a separate repo with the id `screener`, whose history up to 3.0.1 this one shares, so the two install side by side.
 
 ## Commands
 
@@ -9,13 +9,13 @@ Node 24.
 - `npm install`
 - `npm run typecheck` — `tsc --noEmit`
 - `npm test` — Node's test runner over the `*.test.ts` files, which strips the types itself
-- `npm run package` — `build/screener-<version>.zip`, what a release attaches; the Release workflow runs it on a `v*` tag
+- `npm run package` — `build/screener-mcp-<version>.zip`, what a release attaches; the Release workflow runs it on a `v*` tag
 
 Style: square, no rounded corners. Colours are the app's theme variables with the light value as fallback (`var(--jaspers-border, #e5e5e5)`, `var(--jaspers-muted-foreground, #737373)`), so a view follows the app's light and dark; a colour of the plugin's own gets its dark value under `@media (prefers-color-scheme: dark)`. The only colours besides grey are the sign of a number and the verdict of a run.
 
 ## The plugin
 
-One connection, `screener/jaspers`: the screener MCP at `http://127.0.0.1:3333/mcp` (streamable HTTP, stateless), with no secret and no header, because the server has no authentication yet and listens on the local machine only; the key comes back as a secret and an `Authorization` header when it is deployed. `tools` names the five it offers: `screen_companies`, `start_qualitative_screen`, `get_qualitative_screen`, `get_company`, `get_guide`. On it, five sources (`screen`, `guide`, `qualitative-start`, `qualitative`, `company`) and one view. `screen` and `qualitative` have `ttlMs: 0`: a call on a server-side session or a run that is still going is not a function of its arguments, so the app's cache of rows by arguments must not answer for it.
+One connection, `screener-mcp/jaspers`: the screener MCP at `https://s.jsprai.com/mcp` (streamable HTTP, stateless), with the key in the URL as `?key=${secret:token}`, which is where the server reads it: claude.ai's connector can send no header, so the server takes the key in the URL from every caller. `token` is the one secret, pasted once and sealed by the app. To run against a server on this machine, point `url` at `http://127.0.0.1:3333/mcp?key=${secret:token}`. `tools` names the five it offers: `screen_companies`, `start_qualitative_screen`, `get_qualitative_screen`, `get_company`, `get_guide`. On it, five sources (`screen`, `guide`, `qualitative-start`, `qualitative`, `company`) and one view. `screen` and `qualitative` have `ttlMs: 0`: a call on a server-side session or a run that is still going is not a function of its arguments, so the app's cache of rows by arguments must not answer for it.
 
 The server owns the fields. `get_guide {topic: "fields"}` answers with one row per field (`field, group, kind, unit, ops, sortable, description`), and the view draws its field picker, its ops, its value inputs, its column picker and its cell formats from those rows. There is no list of fields, labels or units in this repo; a label is made from the field's name (`fieldLabel`).
 
@@ -35,4 +35,4 @@ The rows are the list that passes the filters, not the answer to a criterion, an
 
 Evidence is asked for one company at a time, `{run_id, tickers: [ticker], evidence: true}`, when its row is opened (`state.open`) and again when its answer changes. A criterion's `evidence` is a list of citation ids and `citations` holds each quote once with `id, title, url, quote` (the contract is in screener-mcp's `docs/superpowers/specs/2026-09-20-citations.md`). Quotes stay in a ref, never in state. A citation card shows the title and the quote and opens the server's link with `openLink`; the server has already verified the quote, so the view checks nothing. `usePublishText` publishes the open company's evidence with `[^id]` after every quote, which is how the chat cites it: the terminal resolves the marker against the citations it took from the same tool result.
 
-The orchestrator drives it by state: `place_view { view: 'screener/screener', state: { filters: [{ field: 'sic_description', op: 'contains', value: 'software' }] } }`, then `set panels/e1/state/filters [...]` with the complete list, and `get panels/e1/output` for what is on screen. The output is kept under the app's 4,096 bytes by `fitOutput`, which gives up tickers at the end of the page first. Point the connection's `url` at another server with the same tools and nothing else in the screener changes.
+The orchestrator drives it by state: `place_view { view: 'screener-mcp/screener', state: { filters: [{ field: 'sic_description', op: 'contains', value: 'software' }] } }`, then `set panels/e1/state/filters [...]` with the complete list, and `get panels/e1/output` for what is on screen. The output is kept under the app's 4,096 bytes by `fitOutput`, which gives up tickers at the end of the page first. Point the connection's `url` at another server with the same tools and nothing else in the screener changes.
