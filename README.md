@@ -21,7 +21,7 @@ and press Install. The app downloads the latest release, shows where it came fro
 
 ## Needs
 
-A screener MCP key. The plugin reaches the Jaspers screener MCP server at `https://s.jsprai.com/mcp` and passes the key the way the server takes it, as `?key=`; the app asks for it once and keeps it sealed in your OS keychain.
+A Jaspers Screener account (sign up at https://s.jsprai.com/auth/signup). After installing, press Authorize in Settings > Plugins and sign in in the browser that opens. The plugin reaches the Jaspers screener MCP server at `https://s.jsprai.com/mcp`.
 
 The earlier hosted server (`https://analyst-api.jsprai.com/mcp/open`, with a Jaspers API key) is [plugin-screener](https://github.com/JaspersAI/plugin-screener)'s. The two have different ids, `screener-mcp` and `screener`, so they install side by side; this repo shares that one's history up to 3.0.1.
 

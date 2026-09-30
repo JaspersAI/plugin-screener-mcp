@@ -129,12 +129,13 @@ const company = defineSource({
 
 export default definePlugin({
   id: 'screener-mcp',
-  secrets: { token: { label: 'Screener MCP key' } },
   connections: {
-    // The key goes in the URL because that is where the server reads it: claude.ai's connector can
-    // send no header, so the server takes ?key= from every caller. The app fills it in, sealed.
+    // The server signs users in itself: the terminal runs the OAuth flow (Authorize, in Settings under
+    // Plugins) and sends the token it was given as a bearer on every call. Nothing to paste, and nothing
+    // in the URL.
     jaspers: defineConnection({
-      url: 'https://s.jsprai.com/mcp?key=${secret:token}',
+      url: 'https://s.jsprai.com/mcp',
+      auth: 'oauth',
       tools: ['screen_companies', 'start_qualitative_screen', 'get_qualitative_screen', 'get_company', 'get_guide'],
     }),
   },
