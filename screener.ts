@@ -448,7 +448,6 @@ export function screenArgs(
   }
 }
 
-/** How far over the qualitative stage's limit the list is, in the words the view and the orchestrator are told. */
 /**
  * What an empty table says. A screen that failed has no answer, so it must not read as one: "No
  * companies match" under a refusal reads as the filters passing nobody, when nothing was asked of
@@ -460,6 +459,7 @@ export function emptyText(error: string | null | undefined, hiddenBy: string[]):
   return 'No companies match.'
 }
 
+/** How far over the qualitative stage's limit the list is, in the words the view and the orchestrator are told. */
 export function overLimit(screen: Pick<Screen, 'count' | 'max'>): string {
   if (screen.count === 0) return 'The list is empty: there is nothing to check.'
   const over = screen.count - screen.max
