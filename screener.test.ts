@@ -16,6 +16,7 @@ import {
   passedTickers,
   stageOf,
   OUTPUT_BYTES,
+  emptyText,
   overLimit,
   parseValue,
   progressText,
@@ -419,4 +420,12 @@ test('who passed is the companies with a pass, by ticker: the rows of the table 
   ])
   assert.deepEqual(passedTickers(run), ['AAA'])
   assert.deepEqual(passedTickers(null), [])
+})
+
+test('an empty table under a failed screen says the screen did not run, never that nothing matched', () => {
+  const refused = 'Your Jaspers account does not include the screener.'
+  assert.equal(emptyText(refused, []), `The screen did not run, so nothing is listed: ${refused}`)
+  assert.equal(emptyText(refused, ['pass']), `The screen did not run, so nothing is listed: ${refused}`)
+  assert.equal(emptyText(null, ['pass']), 'No company on this page is pass. The verdict buttons above show the others.')
+  assert.equal(emptyText(undefined, []), 'No companies match.')
 })

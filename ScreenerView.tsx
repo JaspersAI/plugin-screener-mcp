@@ -14,6 +14,7 @@ import {
   fitOutput,
   inSync,
   needsStart,
+  emptyText,
   overLimit,
   passedTickers,
   readFields,
@@ -318,9 +319,12 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     <div className="sc-root">
       <div className="sc-bar sc-top">
         <FilterBar listed={listed} fields={fieldMap} onChange={changeListed} onOpen={() => setDialog('filters')} onColumns={() => setDialog('columns')} />
-        <span className="sc-count">
-          {visible.length} shown of {(screen?.count ?? 0).toLocaleString('en-US')}
-        </span>
+        {/* A count only for a screen that answered: "0 shown of 0" under a failure reads as a result. */}
+        {screen && !(error && rows.length === 0) && (
+          <span className="sc-count">
+            {visible.length} shown of {screen.count.toLocaleString('en-US')}
+          </span>
+        )}
       </div>
 
       <Funnel screen={screen} fields={fieldMap} />
@@ -346,7 +350,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         sort={sort}
         onSort={toggleSort}
         loading={loading && data === undefined}
-        empty={snapshot && verdicts.length > 0 && rows.length > 0 ? `No company on this page is ${verdicts.join(' or ')}. The verdict buttons above show the others.` : 'No companies match.'}
+        empty={emptyText(error, snapshot && verdicts.length > 0 && rows.length > 0 ? verdicts : [])}
         run={snapshot ? { criteria: snapshot.criteria, results } : null}
         open={open}
         onOpen={(ticker) => setOpen(ticker === open ? '' : ticker)}
