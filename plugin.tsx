@@ -130,9 +130,9 @@ const company = defineSource({
 export default definePlugin({
   id: 'screener-mcp',
   connections: {
-    // The server signs users in itself: the terminal runs the OAuth flow (Authorize, in Settings under
-    // Plugins) and sends the token it was given as a bearer on every call. Nothing to paste, and nothing
-    // in the URL.
+    // The server signs its users in through Jaspers' Account: the terminal connects it on its own sign-in
+    // with Jaspers (before 0.4.0, on an OAuth flow of the connection's own, Authorize in Settings under
+    // Plugins) and sends the token as a bearer on every call. Nothing to paste, and nothing in the URL.
     jaspers: defineConnection({
       url: 'https://s.jsprai.com/mcp',
       auth: 'oauth',
