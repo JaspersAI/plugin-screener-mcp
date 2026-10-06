@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { useBridge, useData, usePanelState, usePublish, usePublishText, type PanelRef } from '@jaspers-ai/sdk'
+import { useBridge, useData, usePanelState, usePublish, usePublishText, type Bridge, type PanelRef } from '@jaspers-ai/sdk'
 import { ColumnsDialog } from './Columns'
 import { EvidencePane, type Evidenced } from './Evidence'
 import { FilterBar, FilterDialog, type Listed } from './Filters'
 import { Funnel } from './Funnel'
-import { QualitativeBar } from './Qualitative'
+import { QualitativeBar, RunProgress } from './Qualitative'
 import { Table } from './Table'
 import {
   DEFAULT_COLUMNS,
@@ -12,10 +12,13 @@ import {
   echoOf,
   evidenceText,
   fitOutput,
+  followArgs,
   inSync,
+  mergeRun,
   needsStart,
   overLimit,
   passedTickers,
+  publishedFilters,
   readFields,
   readRun,
   readRunText,
@@ -42,10 +45,24 @@ import './styles.css'
 
 /** One server page, the most the server sends. The table scrolls it; Prev and Next ask for the next one. */
 const PAGE = 200
-/** How long one status call waits on the server while a run goes on. */
-const POLL_SECONDS = 20
+/**
+ * How long one read of a run waits on the server while the run goes on, and so how often the run on
+ * screen is brought up to date. The server holds the call that long and answers with the run as it is
+ * then; it tells of each company as it finishes only in progress notices, which do not reach a view.
+ */
+const POLL_SECONDS = 3
 const FIELDS = { topic: 'fields' }
 const NONE: never[] = []
+
+/** One get_qualitative_screen answer, read: its results are a dataset's rows in main, the rest its meta. */
+async function readRunFrom(bridge: Bridge, args: Record<string, unknown>): Promise<RunSnapshot> {
+  const result = await bridge.runSource('screener-mcp/qualitative', args, { fresh: true })
+  return result.kind === 'dataset' ? readRun(result.meta, await bridge.datasetRows(result.datasetId)) : readRunText(result.text)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /**
  * The panel's state arrives a round trip after the frame mounts, and the screen is nothing without
@@ -193,10 +210,11 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     })()
   }, [bridge, criteria, run, screen, settled, setRun, connectionsKey])
 
-  // A run is followed until it is done. The first call answers at once, so a panel that comes back
-  // to a run shows where it is; each one after waits on the server for up to 20 s, so the loop is
-  // one request in flight at a time, never a burst. Results come without evidence: that is asked
-  // for one company at a time, below.
+  // A run is followed until it is done. The first read is the whole run, at once, so a panel that
+  // comes back to a run shows where it is; each one after waits on the server a few seconds and asks
+  // only for the companies not yet over (followArgs), so the loop is one small request in flight at a
+  // time, never a burst, and a company's answers are fetched once. Results come without evidence:
+  // that is asked for one company at a time, below.
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
   const [readAgain, setReadAgain] = useState(0)
   /** Each opened company's evidence, and the answer it was read for. */
@@ -214,13 +232,19 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     }
     let live = true
     void (async () => {
-      for (let wait = 0; live; wait = POLL_SECONDS) {
+      let seen: RunSnapshot | null = null
+      while (live) {
+        const asked = Date.now()
         let next: RunSnapshot
         try {
-          const result = await bridge.runSource('screener-mcp/qualitative', { run_id: runId, wait_seconds: wait }, { fresh: true })
-          const found = result.kind === 'dataset' ? await bridge.datasetRows(result.datasetId) : NONE
+          const read = await readRunFrom(bridge, followArgs(runId, seen, POLL_SECONDS))
           if (!live) return
-          next = result.kind === 'dataset' ? readRun(result.meta, found) : readRunText(result.text)
+          next = seen ? mergeRun(seen, read) : read
+          // A run that ended while it was followed is read whole once more: the reads before this one each held some of its companies.
+          if (seen && next.status === 'done') {
+            next = await readRunFrom(bridge, followArgs(runId, null, 0))
+            if (!live) return
+          }
         } catch (err) {
           if (!live) return
           const text = err instanceof Error ? err.message : String(err)
@@ -235,6 +259,9 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         if (status.current !== now && now === 'done' && chosen.current.length === 0) void write({ run: { id: runId, status: now }, verdicts: ['pass'] })
         else if (status.current !== now) setRun({ id: runId, status: now })
         if (next.status === 'done') return
+        // The pace is the server's, which holds each read after the first. One that answers sooner is not asked again at once.
+        if (seen) await sleep(POLL_SECONDS * 1000 - (Date.now() - asked))
+        seen = next
       }
     })()
     return () => {
@@ -259,10 +286,8 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     let live = true
     void (async () => {
       try {
-        const result = await bridge.runSource('screener-mcp/qualitative', { run_id: runId, tickers: [open], evidence: true }, { fresh: true })
-        const found = result.kind === 'dataset' ? await bridge.datasetRows(result.datasetId) : NONE
+        const read = await readRunFrom(bridge, { run_id: runId, tickers: [open], evidence: true })
         if (!live) return
-        const read = result.kind === 'dataset' ? readRun(result.meta, found) : readRunText(result.text)
         const company = read.results[0]
         if (!company) throw new Error(`The run has no company with the ticker ${open}.`)
         evidence.current.set(open, { key: openKey, found: { company, citations: read.citations } })
@@ -290,7 +315,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
       session_id: screen?.sessionId ?? null,
       universe: screen?.universe ?? 0,
       count: screen?.count ?? 0,
-      applied_filters: screen?.applied ?? [],
+      applied_filters: publishedFilters(screen),
       tickers: visible.map((row) => row.ticker).filter((ticker): ticker is string => typeof ticker === 'string'),
       unknown_tickers: screen?.unknownTickers ?? [],
       sort,
@@ -301,6 +326,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
             run_id: run.id ?? null,
             status: stageOf(criteria, run),
             progress: snapshot?.progress ?? null,
+            ...(snapshot?.phase ? { earnings_calls: snapshot.phase } : {}),
             ...(snapshot ? { passed: passedTickers(snapshot) } : {}),
             ...(run.error ? { error: run.error } : {}),
           }
@@ -323,7 +349,9 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         </span>
       </div>
 
-      <Funnel screen={screen} fields={fieldMap} />
+      <Funnel listed={listed} screen={screen} loading={loading} fields={fieldMap}>
+        <RunProgress criteria={criteria} run={run} snapshot={snapshot} />
+      </Funnel>
 
       <QualitativeBar
         criteria={criteria}
@@ -346,6 +374,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         sort={sort}
         onSort={toggleSort}
         loading={loading && data === undefined}
+        stale={loading && data !== undefined}
         empty={snapshot && verdicts.length > 0 && rows.length > 0 ? `No company on this page is ${verdicts.join(' or ')}. The verdict buttons above show the others.` : 'No companies match.'}
         run={snapshot ? { criteria: snapshot.criteria, results } : null}
         open={open}

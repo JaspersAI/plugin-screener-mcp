@@ -361,13 +361,30 @@ export interface Echo {
   includeUnlisted: boolean
 }
 
+/** A company a filter removed, as the server names it: its ticker and name, and the value of the filter's field that did not pass. */
+export interface Removed {
+  ticker: string | null
+  name: string | null
+  value: unknown
+}
+
+/** A filter as the server applied it, with what the answer says of it. */
+export interface Applied extends Filter {
+  /** Companies of the universe that pass it on its own. */
+  matches: number
+  /** Companies left after it and every filter before it; null from a server that does not say. */
+  left: number | null
+  /** The first companies, in the table's order, that it removed from those left before it; null from a server that does not name them. */
+  removed: Removed[] | null
+}
+
 /** A screen_companies answer without its rows: the dataset's meta, read leniently. */
 export interface Screen {
   sessionId: string | null
   universe: number
   count: number
   countBefore: number | null
-  applied: (Filter & { matches: number })[]
+  applied: Applied[]
   tickers: string[]
   unknownTickers: string[]
   includeUnlisted: boolean
@@ -390,6 +407,8 @@ export function readScreen(meta: Record<string, unknown>): Screen | null {
         op: f.op as Op,
         ...(f.value === undefined || f.value === null ? {} : { value: f.value as Filter['value'] }),
         matches: number(f.matches),
+        left: typeof f.left === 'number' ? f.left : null,
+        removed: Array.isArray(f.removed) ? f.removed.filter(isRecord).map(readRemoved) : null,
       })),
     tickers: strings(meta.tickers),
     unknownTickers: strings(meta.unknown_tickers),
@@ -399,11 +418,20 @@ export function readScreen(meta: Record<string, unknown>): Screen | null {
   }
 }
 
+function readRemoved(company: Record<string, unknown>): Removed {
+  return {
+    ticker: typeof company.ticker === 'string' ? company.ticker : null,
+    name: typeof company.name === 'string' ? company.name : null,
+    value: company.value ?? null,
+  }
+}
+
 export function echoOf(screen: Screen): Echo | null {
   if (!screen.sessionId) return null
   return {
     sessionId: screen.sessionId,
-    filters: screen.applied.map(({ matches: _matches, ...filter }) => filter),
+    // The filter, and nothing the answer said about it.
+    filters: screen.applied.map(({ field, op, value }) => (value === undefined ? { field, op } : { field, op, value })),
     tickers: screen.tickers,
     includeUnlisted: screen.includeUnlisted,
   }
@@ -422,12 +450,16 @@ export function inSync(state: Listed & { sessionId: string | null }, echo: Echo 
   )
 }
 
+/** How many of the companies each filter removes the server is asked to name: what one row of the funnel has room for. */
+export const REMOVED_NAMES = 8
+
 /**
  * What one screen_companies call sends. The list (filters, include_unlisted) goes whole when the
  * session does not hold it yet, and is left out when only the sort, the page or the columns moved:
  * to the server a call that names the list is a change of it, and one that does not is a read.
  * No tickers leave the view unless the user has a list of their own: they go as the server's
  * tickers parameter, an empty one only to clear a list the session still holds, and never as a column.
+ * Every call asks whom each filter removed, since the funnel is drawn from whichever answer is on screen.
  */
 export function screenArgs(
   state: Listed & Pick<State, 'sort' | 'page' | 'columns' | 'sessionId'>,
@@ -435,7 +467,7 @@ export function screenArgs(
   pageSize: number,
 ): Record<string, unknown> {
   const columns = state.columns.filter((field) => !IDENTITY.has(field))
-  const read = { sort: state.sort, columns, limit: pageSize, offset: state.page * pageSize }
+  const read = { sort: state.sort, columns, limit: pageSize, offset: state.page * pageSize, removed_names: REMOVED_NAMES }
   if (inSync(state, echo)) return { session_id: state.sessionId, ...read }
   // Left out, the session's list stays, and a new session has none: [] is only how a list is taken back.
   const held = (echo?.tickers.length ?? 0) > 0
@@ -446,6 +478,91 @@ export function screenArgs(
     include_unlisted: state.includeUnlisted,
     ...read,
   }
+}
+
+// The funnel: the universe, then what each filter did to the list in its turn.
+
+/** What the answer on screen says of one row of the funnel. */
+export interface FunnelAnswer {
+  /** Companies left after the row; null where the server does not say. */
+  left: number | null
+  /** How many of those the row before it left the row removed. */
+  out: number | null
+  /** Companies of the universe that pass the row's filter on its own; null for the universe. */
+  matches: number | null
+  /** The first of the companies removed, in the table's order; null where the server does not name them. */
+  removed: Removed[] | null
+}
+
+export interface FunnelRow {
+  /** What the row is of: the universe and the filters up to it. Two rows with one key say the same, whichever answer they are read from. */
+  key: string
+  /** Null for the universe. */
+  filter: Filter | null
+  /** Null while the answer on screen is of another list. */
+  answer: FunnelAnswer | null
+}
+
+/**
+ * The funnel's rows, which are the state's: the universe, then one for each filter, so they are there
+ * before any answer is. A row has an answer when the one on screen is of the same universe and the
+ * same filters up to it; what a filter left depends on nothing after it, so a filter added at the end
+ * leaves every row above it as it was.
+ */
+export function funnelRows(asked: Listed, screen: Screen | null): FunnelRow[] {
+  const keys = funnelKeys(asked.tickers, asked.includeUnlisted, asked.filters)
+  const held = screen ? funnelKeys(screen.tickers, screen.includeUnlisted, screen.applied) : []
+  let before: number | null = null
+  return keys.map((key, at) => {
+    const filter = asked.filters[at - 1] ?? null
+    if (!screen || held[at] !== key) return { key, filter, answer: null }
+    if (at === 0) {
+      before = screen.universe
+      return { key, filter, answer: { left: screen.universe, out: null, matches: null, removed: null } }
+    }
+    const applied = screen.applied[at - 1]!
+    // A server that does not say what a filter left still says it of two: the first leaves what it matches on its own, the last what passes them all.
+    const left = applied.left ?? (at === 1 ? applied.matches : at === screen.applied.length ? screen.count : null)
+    const out = before !== null && left !== null ? before - left : null
+    before = left
+    return { key, filter, answer: { left, out, matches: applied.matches, removed: applied.removed } }
+  })
+}
+
+/** One key for the universe and one for each filter, each of everything up to it. */
+function funnelKeys(tickers: string[], includeUnlisted: boolean, filters: Filter[]): string[] {
+  const universe = [readTickers(tickers.join(' ')), includeUnlisted]
+  return [null, ...filters].map((_, at) => JSON.stringify([universe, filters.slice(0, at).map(parts)]))
+}
+
+export type RowState = 'done' | 'working' | 'pending'
+
+/**
+ * How each row of the funnel is drawn. `answered` rows have an answer and `shown` of them have been
+ * shown, since the rows of an answer appear one after another. One row is at work at a time: the next
+ * to be shown, or the first one a call is out for (`busy`); when nothing is on its way, none is.
+ */
+export function funnelStates(rows: number, answered: number, shown: number, busy: boolean): RowState[] {
+  const done = Math.min(answered, shown)
+  const moving = busy || shown < answered
+  return Array.from({ length: rows }, (_, at) => (at < done ? 'done' : at === done && moving ? 'working' : 'pending'))
+}
+
+/** How far two lists agree from the start. */
+export function commonPrefix(a: readonly string[], b: readonly string[]): number {
+  let n = 0
+  while (n < a.length && n < b.length && a[n] === b[n]) n++
+  return n
+}
+
+/**
+ * A company a filter removed, as a row of the funnel names it: its ticker, and the value that did not
+ * pass where that is a figure. A dash is a company with no value, which no comparison matches. A
+ * sentence of text or a list says too much for a line of names.
+ */
+export function removedText(company: Removed, field: Pick<Field, 'kind' | 'unit'> | undefined): string {
+  const who = company.ticker ?? company.name ?? '—'
+  return field?.kind === 'number' || field?.kind === 'date' ? `${who} ${cellText(company.value, field)}` : who
 }
 
 /** How far over the qualitative stage's limit the list is, in the words the view and the orchestrator are told. */
@@ -545,14 +662,31 @@ export interface CompanyResult {
   ticker: string | null
   name: string | null
   status: string
+  /** While it is being read: the step it is in, as the server names it. */
+  step: string | null
   verdict: Verdict | null
   error: string | null
   criteria: CriterionResult[]
 }
 
+/** A run's first phase: its companies' earnings calls are fetched, and no company is read before they are in. Off: the run reads the filings alone. */
+export interface Phase {
+  status: (typeof PHASES)[number]
+  /** Companies looked at, of how many. */
+  done: number
+  total: number
+}
+
+const PHASES = ['fetching', 'done', 'off'] as const
+
 export interface RunSnapshot {
   status: 'queued' | 'running' | 'done'
+  /** When the run started and ended, by the server's clock, as ISO text. */
+  createdAt: string | null
+  finishedAt: string | null
   progress: Progress
+  /** Null before the phase starts, and from a server that does not say. */
+  phase: Phase | null
   criteria: Criterion[]
   results: CompanyResult[]
   citations: Record<string, Citation>
@@ -573,6 +707,7 @@ export function readRun(meta: Record<string, unknown>, rows: Record<string, unkn
     ticker: typeof row.ticker === 'string' ? row.ticker : null,
     name: typeof row.name === 'string' ? row.name : null,
     status: typeof row.status === 'string' ? row.status : 'queued',
+    step: typeof row.step === 'string' ? row.step : null,
     verdict: VERDICTS.includes(row.verdict as Verdict) ? (row.verdict as Verdict) : null,
     error: typeof row.error === 'string' ? row.error : null,
     criteria: (Array.isArray(row.criteria) ? row.criteria.filter(isRecord) : []).map((c) => readCriterion(c, citations)),
@@ -580,6 +715,9 @@ export function readRun(meta: Record<string, unknown>, rows: Record<string, unkn
   const progress = isRecord(meta.progress) ? meta.progress : {}
   return {
     status: meta.status === 'done' ? 'done' : meta.status === 'queued' ? 'queued' : 'running',
+    createdAt: typeof meta.created_at === 'string' ? meta.created_at : null,
+    finishedAt: typeof meta.finished_at === 'string' ? meta.finished_at : null,
+    phase: readPhase(meta.earnings_calls),
     progress: {
       total: number(progress.total),
       queued: number(progress.queued),
@@ -602,6 +740,12 @@ export function readRun(meta: Record<string, unknown>, rows: Record<string, unkn
 export function readRunText(text: string): RunSnapshot {
   const { results, ...meta } = parseJson(text)
   return readRun(meta, Array.isArray(results) ? results.filter(isRecord) : [])
+}
+
+function readPhase(value: unknown): Phase | null {
+  if (!isRecord(value)) return null
+  const status = PHASES.find((one) => one === value.status)
+  return status ? { status, done: number(value.done), total: number(value.total) } : null
 }
 
 function readCitation(entry: unknown): Citation | null {
@@ -636,18 +780,87 @@ function readCriterion(c: Record<string, unknown>, citations: Record<string, Cit
   }
 }
 
-/** The companies that passed, by ticker. The table's rows are the list that was read; only these are what the user asked for. */
-export function passedTickers(run: Pick<RunSnapshot, 'results'> | null): string[] {
-  return (run?.results ?? []).flatMap((result) => (result.verdict === 'pass' && result.ticker ? [result.ticker] : []))
+/** The companies with one verdict, by ticker. */
+export function verdictTickers(run: Pick<RunSnapshot, 'results'> | null, verdict: Verdict): string[] {
+  return (run?.results ?? []).flatMap((result) => (result.verdict === verdict && result.ticker ? [result.ticker] : []))
 }
 
-/** Where a run is, in one line: how many companies are read, then the counts by verdict. */
-export function progressText(progress: Progress, status: RunSnapshot['status']): string {
-  const read = progress.total - progress.queued - progress.running
-  const head = status === 'done' ? `${progress.total} read` : `reading: ${read} of ${progress.total}`
-  const counts = VERDICTS.map((verdict) => `${progress[verdict]} ${verdict}`)
-  if (progress.error > 0) counts.push(`${progress.error} error`)
-  return `${head} · ${counts.join(' · ')}`
+/** The companies that passed, by ticker. The table's rows are the list that was read; only these are what the user asked for. */
+export function passedTickers(run: Pick<RunSnapshot, 'results'> | null): string[] {
+  return verdictTickers(run, 'pass')
+}
+
+/** A company's part of a run is over, as done or as an error. */
+function over(result: Pick<CompanyResult, 'status'>): boolean {
+  return result.status === 'done' || result.status === 'error'
+}
+
+/**
+ * What one read of a run asks for. The first is the whole run, at once, so a panel that comes back to
+ * one shows where it is. Each one after waits on the server a few seconds and asks only for the
+ * companies not yet over: a company's answers come once, when it finishes, and the app, which keeps
+ * every answer it is given, is not handed the whole run again every few seconds. While the earnings
+ * calls are fetched no company is read, so none is asked for and the answer is the counts alone.
+ */
+export function followArgs(runId: string, seen: RunSnapshot | null, waitSeconds: number): Record<string, unknown> {
+  if (!seen) return { run_id: runId }
+  const reading = seen.phase?.status === 'fetching' ? [] : seen.results.flatMap((result) => (!over(result) && result.ticker ? [result.ticker] : []))
+  return { run_id: runId, wait_seconds: waitSeconds, tickers: reading }
+}
+
+/** A run as it was last seen, brought up to date by an answer that holds only some of its companies. */
+export function mergeRun(seen: RunSnapshot, next: RunSnapshot): RunSnapshot {
+  const fresh = new Map(next.results.map((result) => [result.cik, result]))
+  return { ...next, results: seen.results.map((result) => fresh.get(result.cik) ?? result) }
+}
+
+/** How many of a run's companies are over, as done or as an error. */
+export function finished(progress: Progress): number {
+  return progress.total - progress.queued - progress.running
+}
+
+/** What a run is doing, in a few words. Its companies' earnings calls come first: no company is read before they are in. */
+export function doingText(run: Pick<RunSnapshot, 'status' | 'progress' | 'phase'>): string {
+  const { progress, phase } = run
+  if (run.status === 'done') return `${progress.total} read`
+  if (phase?.status === 'fetching') return `fetching earnings calls: ${phase.done} of ${phase.total}`
+  return `reading: ${finished(progress)} of ${progress.total}`
+}
+
+/** Where a run is, in one line: what it is doing, then the counts by verdict. */
+export function progressText(run: Pick<RunSnapshot, 'status' | 'progress' | 'phase'>): string {
+  const counts = VERDICTS.map((verdict) => `${run.progress[verdict]} ${verdict}`)
+  if (run.progress.error > 0) counts.push(`${run.progress.error} error`)
+  return `${doingText(run)} · ${counts.join(' · ')}`
+}
+
+/**
+ * How long a run has gone, or took, as a clock: 1:42, and 1:02:03 past the hour. It counts from when
+ * the server says the run started, so a panel that comes back to a run shows its time and not its
+ * own; a clock here that is behind the server's never counts backwards. Null for a run that does not say.
+ */
+export function elapsedText(run: Pick<RunSnapshot, 'createdAt' | 'finishedAt'>, now: number): string | null {
+  const from = run.createdAt ? Date.parse(run.createdAt) : NaN
+  const to = run.finishedAt ? Date.parse(run.finishedAt) : now
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null
+  const seconds = Math.max(0, Math.floor((to - from) / 1000))
+  const two = (value: number): string => String(value).padStart(2, '0')
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return seconds >= 3600 ? `${Math.floor(seconds / 3600)}:${two(minutes)}:${two(seconds % 60)}` : `${minutes}:${two(seconds % 60)}`
+}
+
+/** The steps the server takes a company through while it reads it, in order, as it names them, and the word for each. */
+const READING: [step: string, word: string][] = [
+  ['search', 'search'],
+  ['jev', 'relevance'],
+  ['llm', 'answer'],
+  ['verify', 'verify'],
+]
+
+/** Where a company being read is: how many steps are behind it, of how many, and the word for the one it is in. Null on none yet, and on one this view has not heard of. */
+export function readingAt(step: string | null): { at: number; of: number; word: string } | null {
+  const at = READING.findIndex(([name]) => name === step)
+  return at < 0 ? null : { at, of: READING.length, word: READING[at]![1] }
 }
 
 /** A verification that did not hold, in words; nothing for one that did, or for a claim of absence, which cites nothing. */
@@ -701,16 +914,22 @@ export interface Output {
   session_id: string | null
   universe: number
   count: number
-  applied_filters: (Filter & { matches: number })[]
+  /** matches: what the filter passes on its own. left: what remains after it and every one before it, which is what the funnel shows. */
+  applied_filters: (Filter & { matches: number; left?: number })[]
   /** The tickers on this page, in order. */
   tickers: string[]
   unknown_tickers: string[]
   sort: Sort
   qualitative_ready: boolean
   qualitative_max: number
-  /** status is a Stage. passed: the tickers with a pass, once there are results; the rows above are only the list that was read. */
-  qualitative?: { run_id: string | null; status: string; progress: Progress | null; passed?: string[]; error?: string }
+  /** status is a Stage. earnings_calls: the run's first phase, once it has started. passed: the tickers with a pass, once there are results; the rows above are only the list that was read. */
+  qualitative?: { run_id: string | null; status: string; progress: Progress | null; earnings_calls?: Phase; passed?: string[]; error?: string }
   open: string
+}
+
+/** The filters as the output carries them: what each left, as the funnel shows it, and not whom it removed, which is a company's worth of names for every filter. */
+export function publishedFilters(screen: Pick<Screen, 'applied'> | null): Output['applied_filters'] {
+  return (screen?.applied ?? []).map(({ removed: _removed, left, ...filter }) => (left === null ? filter : { ...filter, left }))
 }
 
 /** The app takes 4,096 bytes of output: the tickers at the end of the page give way first. */
@@ -740,7 +959,7 @@ export function summarize(state: Partial<State>, output: Partial<Output>): strin
       q.status === 'error'
         ? `qualitative run failed: ${q.error ?? 'unknown error'}`
         : progress
-          ? `qualitative run ${q.status}: ${progressText(progress, q.status === 'done' ? 'done' : 'running')}`
+          ? `qualitative run ${q.status}: ${progressText({ status: q.status === 'done' ? 'done' : 'running', progress, phase: q.earnings_calls ?? null })}`
           : q.status === 'no_criteria'
             ? 'a qualitative run was asked for but NOT started: state.criteria is empty'
             : `qualitative run ${q.status}`,

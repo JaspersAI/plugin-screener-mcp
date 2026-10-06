@@ -70,7 +70,8 @@ const OutputSchema = z.object({
   session_id: z.string().nullable(),
   universe: z.number(),
   count: z.number(),
-  applied_filters: z.array(Filter.extend({ matches: z.number() })),
+  /** matches: what the filter passes on its own. left: what remains after it and every one before it. */
+  applied_filters: z.array(Filter.extend({ matches: z.number(), left: z.number().optional() })),
   tickers: z.array(z.string()),
   unknown_tickers: z.array(z.string()),
   sort: Sort,
@@ -81,6 +82,8 @@ const OutputSchema = z.object({
       run_id: z.string().nullable(),
       status: z.string(),
       progress: Progress.nullable(),
+      /** The run's first phase: no company is read before its companies' earnings calls are in. */
+      earnings_calls: z.object({ status: z.enum(['fetching', 'done', 'off']), done: z.number(), total: z.number() }).optional(),
       passed: z.array(z.string()).optional(),
       error: z.string().optional(),
     })

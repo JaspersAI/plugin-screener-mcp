@@ -2,36 +2,49 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   cellText,
+  commonPrefix,
   DEFAULT_SORT,
+  doingText,
   echoOf,
+  elapsedText,
   evidenceText,
   fieldLabel,
   filterText,
+  finished,
   fitOutput,
+  followArgs,
   fromDraft,
+  funnelRows,
+  funnelStates,
   gatheredText,
   groupFields,
   inSync,
+  mergeRun,
   needsStart,
-  passedTickers,
-  stageOf,
   OUTPUT_BYTES,
   overLimit,
   parseValue,
+  passedTickers,
   progressText,
+  publishedFilters,
   readFields,
+  readingAt,
   readRun,
   readRunText,
   readScreen,
   readStart,
   readTickers,
+  REMOVED_NAMES,
+  removedText,
   screenArgs,
   shownColumns,
   signOf,
   slug,
+  stageOf,
   summarize,
   toDraft,
   valueText,
+  verdictTickers,
   verificationMark,
   type Field,
   type Filter,
@@ -207,25 +220,121 @@ const VIEW = { ...LISTED, sort: DEFAULT_SORT, page: 0, columns: ['roe'] }
 test('a screen\'s answer is read from the dataset\'s meta', () => {
   const screen = readScreen(ANSWER)!
   assert.deepEqual([screen.sessionId, screen.universe, screen.count, screen.countBefore, screen.ready, screen.max], ['scr_00000000000000aa', 5378, 281, 1204, false, 100])
-  assert.deepEqual(screen.applied, [{ field: 'gross_margin', op: 'gte', value: 0.5, matches: 2011 }, { field: 'revenue', op: 'not_null', matches: 4102 }])
+  assert.deepEqual(screen.applied, [
+    { field: 'gross_margin', op: 'gte', value: 0.5, matches: 2011, left: null, removed: null },
+    { field: 'revenue', op: 'not_null', matches: 4102, left: null, removed: null },
+  ])
   assert.deepEqual([screen.tickers, screen.unknownTickers], [[], ['ZZZZ']])
   // Nothing yet, or an answer that is not a screen's.
   assert.equal(readScreen({}), null)
 })
 
+const FUNNEL = {
+  ...ANSWER,
+  applied_filters: [
+    { field: 'gross_margin', op: 'gte', value: 0.5, matches: 2011, left: 2011, removed: [
+      { cik: 104169, ticker: 'WMT', name: 'Walmart Inc.', value: 0.249 },
+      { cik: 1, ticker: null, name: 'Unlisted Trust', value: null },
+      'not a company',
+    ] },
+    { field: 'revenue', op: 'not_null', matches: 4102, left: 281, removed: [] },
+  ],
+}
+
+test('what each filter left and whom it removed is read when the server says, and is nothing when it does not', () => {
+  const screen = readScreen(FUNNEL)!
+  assert.deepEqual(screen.applied[0], { field: 'gross_margin', op: 'gte', value: 0.5, matches: 2011, left: 2011, removed: [
+    { ticker: 'WMT', name: 'Walmart Inc.', value: 0.249 },
+    { ticker: null, name: 'Unlisted Trust', value: null },
+  ] })
+  assert.deepEqual([screen.applied[1]!.left, screen.applied[1]!.removed], [281, []])
+  // A server from before the funnel: the filters are read as they were.
+  assert.deepEqual(readScreen(ANSWER)!.applied.map((filter) => [filter.left, filter.removed]), [[null, null], [null, null]])
+  // What the session holds is the filter, and nothing the answer said about it.
+  assert.deepEqual(echoOf(screen)!.filters, LISTED.filters)
+})
+
+test('the funnel is the universe and then each filter in its turn: what it left, how many it removed, and the first of them', () => {
+  const rows = funnelRows(LISTED, readScreen(FUNNEL))
+  assert.deepEqual(rows.map((row) => row.filter), [null, ...LISTED.filters])
+  assert.deepEqual(rows.map((row) => row.answer && [row.answer.left, row.answer.out]), [[5378, null], [2011, 3367], [281, 1730]])
+  assert.deepEqual(rows[1]!.answer!.removed!.map((company) => company.ticker), ['WMT', null])
+  assert.equal(new Set(rows.map((row) => row.key)).size, 3)
+})
+
+test('the funnel is drawn from the state before any answer, and a row keeps its answer while what it is of has not changed', () => {
+  // Nothing has answered yet: the rows are there, with nothing in them.
+  assert.deepEqual(funnelRows(LISTED, null).map((row) => [row.filter?.field ?? null, row.answer]), [[null, null], ['gross_margin', null], ['revenue', null]])
+  // A filter added at the end: the answer on screen still says what the rows before it left.
+  const more = { ...LISTED, filters: [...LISTED.filters, { field: 'debt_to_equity', op: 'lt', value: 1 } as Filter] }
+  assert.deepEqual(funnelRows(more, readScreen(FUNNEL)).map((row) => row.answer?.left ?? null), [5378, 2011, 281, null])
+  // One changed in the middle: it and every row after it wait for the next answer.
+  const changed = { ...LISTED, filters: [{ field: 'gross_margin', op: 'gte', value: 0.6 } as Filter, LISTED.filters[1]!] }
+  assert.deepEqual(funnelRows(changed, readScreen(FUNNEL)).map((row) => row.answer !== null), [true, false, false])
+  // Another universe: nothing on screen is of this list.
+  assert.deepEqual(funnelRows({ ...LISTED, tickers: ['AAPL'] }, readScreen(FUNNEL)).map((row) => row.answer !== null), [false, false, false])
+  // The same list, however its tickers were typed.
+  const own = readScreen({ ...FUNNEL, tickers: ['AAPL', 'MSFT'] })
+  assert.deepEqual(funnelRows({ ...LISTED, tickers: ['aapl', 'MSFT'] }, own).map((row) => row.answer !== null), [true, true, true])
+})
+
+test('a server that does not say what each filter left still gives the first row and the last', () => {
+  const between = { field: 'debt_to_equity', op: 'lt', value: 1 }
+  const answer = { ...ANSWER, count: 40, applied_filters: [ANSWER.applied_filters[0], { ...between, matches: 900 }, ANSWER.applied_filters[1]] }
+  const asked = { ...LISTED, filters: [LISTED.filters[0]!, between as Filter, LISTED.filters[1]!] }
+  // The first filter leaves what it matches on its own and the last what passes all of them; the one between is not known.
+  assert.deepEqual(funnelRows(asked, readScreen(answer)).map((row) => row.answer && [row.answer.left, row.answer.out]), [[5378, null], [2011, 3367], [null, null], [40, null]])
+})
+
+test('one row of the funnel is at work at a time: the next of an answer still being shown, or the first a call is out for', () => {
+  assert.deepEqual(funnelStates(3, 3, 3, false), ['done', 'done', 'done'])
+  // The answer is in and its rows are shown one after another.
+  assert.deepEqual(funnelStates(3, 3, 1, false), ['done', 'working', 'pending'])
+  // A filter was added: the rows before it stand, and it waits for the call.
+  assert.deepEqual(funnelStates(3, 1, 1, true), ['done', 'working', 'pending'])
+  assert.deepEqual(funnelStates(3, 0, 0, true), ['working', 'pending', 'pending'])
+  // A call that failed: nothing is on its way.
+  assert.deepEqual(funnelStates(3, 1, 1, false), ['done', 'pending', 'pending'])
+})
+
+test('how far two lists agree from the start', () => {
+  assert.equal(commonPrefix(['a', 'b', 'c'], ['a', 'b', 'x']), 2)
+  assert.equal(commonPrefix(['a'], ['a', 'b']), 1)
+  assert.equal(commonPrefix([], ['a']), 0)
+})
+
+test('a removed company is named by its ticker, with the value that failed where that is a figure', () => {
+  assert.equal(removedText({ ticker: 'WMT', name: 'Walmart Inc.', value: 0.249 }, field('gross_margin')), 'WMT 24.9%')
+  assert.equal(removedText({ ticker: 'LGIH', name: 'LGI Homes', value: 4.99e8 }, field('revenue')), 'LGIH $499.0M')
+  // No value is why a comparison removed it.
+  assert.equal(removedText({ ticker: 'XYZ', name: 'XYZ Corp', value: null }, field('revenue')), 'XYZ —')
+  // A company without a ticker goes by its name; text and lists say too much for a line of names.
+  assert.equal(removedText({ ticker: null, name: 'Unlisted Trust', value: 'Real estate investment trusts' }, field('sic_description')), 'Unlisted Trust')
+  assert.equal(removedText({ ticker: 'AAPL', name: 'Apple Inc.', value: 0.4 }, undefined), 'AAPL')
+})
+
+test('the orchestrator is told what each filter left, as the user sees it, and not whom it removed', () => {
+  assert.deepEqual(publishedFilters(readScreen(FUNNEL)), [
+    { field: 'gross_margin', op: 'gte', value: 0.5, matches: 2011, left: 2011 },
+    { field: 'revenue', op: 'not_null', matches: 4102, left: 281 },
+  ])
+  assert.deepEqual(publishedFilters(readScreen(ANSWER)), ANSWER.applied_filters)
+  assert.deepEqual(publishedFilters(null), [])
+})
+
 test('the first call sends the whole list; one that only sorts, pages or adds columns names the session and nothing of the list', () => {
   assert.deepEqual(screenArgs({ ...VIEW, sessionId: null }, null, 200), {
-    filters: LISTED.filters, include_unlisted: false, sort: DEFAULT_SORT, columns: ['roe'], limit: 200, offset: 0,
+    filters: LISTED.filters, include_unlisted: false, sort: DEFAULT_SORT, columns: ['roe'], limit: 200, offset: 0, removed_names: REMOVED_NAMES,
   })
   const echo = echoOf(readScreen(ANSWER)!)!
   assert.deepEqual(screenArgs({ ...VIEW, page: 1, sessionId: echo.sessionId }, echo, 200), {
-    session_id: 'scr_00000000000000aa', sort: DEFAULT_SORT, columns: ['roe'], limit: 200, offset: 200,
+    session_id: 'scr_00000000000000aa', sort: DEFAULT_SORT, columns: ['roe'], limit: 200, offset: 200, removed_names: REMOVED_NAMES,
   })
   // A changed list goes whole, under the same session, and still without tickers: nobody gave any.
   const changed = screenArgs({ ...VIEW, filters: [LISTED.filters[0]!], sessionId: echo.sessionId }, echo, 200)
   assert.deepEqual([changed.session_id, changed.filters, 'tickers' in changed, changed.include_unlisted], ['scr_00000000000000aa', [LISTED.filters[0]], false, false])
   // A session that came back from the panel's state, with no answer yet to say what it holds.
-  assert.deepEqual(Object.keys(screenArgs({ ...VIEW, sessionId: 'scr_restored' }, null, 200)).sort(), ['columns', 'filters', 'include_unlisted', 'limit', 'offset', 'session_id', 'sort'])
+  assert.deepEqual(Object.keys(screenArgs({ ...VIEW, sessionId: 'scr_restored' }, null, 200)).sort(), ['columns', 'filters', 'include_unlisted', 'limit', 'offset', 'removed_names', 'session_id', 'sort'])
 })
 
 test('no tickers leave the view unless the user has a list of their own: not as a parameter, not as a column', () => {
@@ -334,9 +443,66 @@ test('a run without evidence, a run as text, and an answer that is nothing are a
   assert.deepEqual([nothing.status, nothing.results, nothing.progress.total], ['running', [], 0])
 })
 
-test('where a run is reads in one line', () => {
-  assert.equal(progressText(META.progress, 'running'), 'reading: 2 of 3 · 1 pass · 0 fail · 0 unclear · 0 unverified · 1 error')
-  assert.equal(progressText({ ...META.progress, running: 0, error: 0, fail: 2 }, 'done'), '3 read · 1 pass · 2 fail · 0 unclear · 0 unverified')
+test('where a run is reads in one line, and its earnings calls come before any company is read', () => {
+  const run = readRun(META, ROWS)
+  assert.equal(progressText(run), 'reading: 2 of 3 · 1 pass · 0 fail · 0 unclear · 0 unverified · 1 error')
+  assert.equal(progressText({ status: 'done', progress: { ...META.progress, running: 0, error: 0, fail: 2 }, phase: null }), '3 read · 1 pass · 2 fail · 0 unclear · 0 unverified')
+  assert.equal(doingText(run), 'reading: 2 of 3')
+  assert.equal(finished(run.progress), 2)
+  const fetching = { ...run, phase: { status: 'fetching' as const, done: 1, total: 3 } }
+  assert.equal(doingText(fetching), 'fetching earnings calls: 1 of 3')
+  // A run that is over read every company, whatever its last answer says of the phase.
+  assert.equal(doingText({ ...fetching, status: 'done' }), '3 read')
+})
+
+test('a run says when it started, where its earnings calls are, and the step of a company being read', () => {
+  const run = readRun({ ...META, earnings_calls: { status: 'fetching', done: 1, total: 3, calls: 1, failed: 0 } }, [ROWS[0]!, { ...ROWS[1], step: 'jev' }, ROWS[2]!])
+  assert.deepEqual(run.phase, { status: 'fetching', done: 1, total: 3 })
+  assert.deepEqual([run.createdAt, run.finishedAt], ['2026-09-20T00:00:00Z', null])
+  assert.deepEqual(run.results.map((result) => result.step), [null, 'jev', null])
+  // A server that says nothing of the phase, or something this view has not heard of.
+  assert.equal(readRun(META, ROWS).phase, null)
+  assert.equal(readRun({ ...META, earnings_calls: { status: 'paused' } }, ROWS).phase, null)
+})
+
+test('a run is read whole once, and after that only the companies not yet over are asked for', () => {
+  assert.deepEqual(followArgs('run_1', null, 3), { run_id: 'run_1' })
+  const waiting = (cik: number, ticker: string | null): Record<string, unknown> => ({ cik, ticker, name: 'A company', status: 'queued', verdict: null, error: null, criteria: [] })
+  const seen = readRun(META, [...ROWS, waiting(4, 'NVDA'), waiting(5, null)])
+  // A company with no ticker cannot be asked for by one.
+  assert.deepEqual(followArgs('run_1', seen, 3), { run_id: 'run_1', wait_seconds: 3, tickers: ['MSFT', 'NVDA'] })
+  // No company is read while the earnings calls are fetched, so none is asked for: the answer is the counts alone.
+  assert.deepEqual(followArgs('run_1', { ...seen, phase: { status: 'fetching', done: 1, total: 5 } }, 3), { run_id: 'run_1', wait_seconds: 3, tickers: [] })
+})
+
+test('an answer that holds some of the companies brings the run up to date and keeps the rest', () => {
+  const seen = readRun(META, ROWS)
+  const next = readRun({ ...META, progress: { ...META.progress, running: 0, fail: 1 } }, [{ ...ROWS[1], status: 'done', verdict: 'fail' }])
+  const merged = mergeRun(seen, next)
+  assert.deepEqual(merged.results.map((result) => [result.ticker, result.status, result.verdict]), [['AAPL', 'done', 'pass'], ['MSFT', 'done', 'fail'], ['AMZN', 'error', null]])
+  assert.deepEqual(merged.progress, next.progress)
+  assert.equal(merged.results[0], seen.results[0])
+})
+
+test('how long a run has gone reads as a clock, from when the server says it started', () => {
+  const at = (iso: string): number => Date.parse(iso)
+  const going = { createdAt: '2026-09-20T00:00:00Z', finishedAt: null }
+  assert.equal(elapsedText(going, at('2026-09-20T00:01:42Z')), '1:42')
+  assert.equal(elapsedText(going, at('2026-09-20T01:02:03Z')), '1:02:03')
+  // A finished run took what it took, whenever it is looked at.
+  assert.equal(elapsedText({ ...going, finishedAt: '2026-09-20T00:04:10Z' }, at('2026-09-21T00:00:00Z')), '4:10')
+  // A clock behind the server's never counts backwards; a run that does not say when it started has no clock.
+  assert.equal(elapsedText(going, at('2026-09-19T23:59:00Z')), '0:00')
+  assert.equal(elapsedText({ createdAt: null, finishedAt: null }, at('2026-09-20T00:00:00Z')), null)
+})
+
+test('a company being read is somewhere along the steps the server takes it through', () => {
+  assert.deepEqual(readingAt('search'), { at: 0, of: 4, word: 'search' })
+  assert.deepEqual(readingAt('jev'), { at: 1, of: 4, word: 'relevance' })
+  assert.deepEqual(readingAt('verify'), { at: 3, of: 4, word: 'verify' })
+  // Not on a step yet, or on one this view has not heard of.
+  assert.equal(readingAt(null), null)
+  assert.equal(readingAt('rerank'), null)
 })
 
 test('a verification that did not hold is marked; one that did, or a claim of absence, is not', () => {
@@ -393,6 +559,10 @@ test('the summary says how many pass, of how many, behind which screen, and wher
     summarize({}, output({ count: 3, qualitative: { run_id: 'run_1', status: 'running', progress: META.progress }, open: 'AAPL' })),
     'Screener: 3 of 5,378 pass, sort revenue desc, qualitative run running: reading: 2 of 3 · 1 pass · 0 fail · 0 unclear · 0 unverified · 1 error, evidence open for AAPL',
   )
+  assert.equal(
+    summarize({}, output({ count: 3, qualitative: { run_id: 'run_1', status: 'running', progress: { ...META.progress, queued: 3, running: 0, error: 0, pass: 0 }, earnings_calls: { status: 'fetching', done: 1, total: 3 } } })),
+    'Screener: 3 of 5,378 pass, sort revenue desc, qualitative run running: fetching earnings calls: 1 of 3 · 0 pass · 0 fail · 0 unclear · 0 unverified',
+  )
   assert.equal(summarize({}, output({ qualitative: { run_id: null, status: 'error', progress: null, error: 'the list is too long' } })), 'Screener: 281 of 5,378 pass, sort revenue desc, qualitative run failed: the list is too long')
 })
 
@@ -418,5 +588,6 @@ test('who passed is the companies with a pass, by ticker: the rows of the table 
     { ...ROWS[0], cik: 4, ticker: 'DDD', verdict: 'unverified' },
   ])
   assert.deepEqual(passedTickers(run), ['AAA'])
+  assert.deepEqual(verdictTickers(run, 'fail'), ['BBB'])
   assert.deepEqual(passedTickers(null), [])
 })

@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { cellText, fieldLabel, signOf, verificationMark, type CompanyResult, type Criterion, type Field, type Sort } from './screener'
+import { cellText, fieldLabel, readingAt, signOf, verificationMark, type CompanyResult, type Criterion, type Field, type Sort } from './screener'
 
 // The table: the company, a run's verdicts when there is one, then the fields filtered, sorted and
 // asked for. A header sorts, and sorting is the server's job — the sort goes into the panel's
@@ -14,6 +14,8 @@ interface Props {
   onSort: (field: string) => void
   /** Nothing is drawn as empty while the first run is still out. */
   loading: boolean
+  /** The rows are of the list before the one a call is out for. */
+  stale: boolean
   /** What an empty table says: that nothing matches, or that a verdict filter hides what does. */
   empty: string
   /** A qualitative run's criteria and what it found, by CIK. */
@@ -23,9 +25,9 @@ interface Props {
   onOpen: (ticker: string) => void
 }
 
-export function Table({ rows, columns, fields, sort, onSort, loading, empty, run, open, onOpen }: Props): ReactElement {
+export function Table({ rows, columns, fields, sort, onSort, loading, stale, empty, run, open, onOpen }: Props): ReactElement {
   return (
-    <div className="sc-table-wrap">
+    <div className={stale ? 'sc-table-wrap sc-stale' : 'sc-table-wrap'}>
       <table className="sc-table">
         <thead>
           <tr>
@@ -102,9 +104,23 @@ function Verdict({ result }: { result: CompanyResult | undefined }): ReactElemen
       </td>
     )
   }
-  if (result.status !== 'done') return <td className="sc-verdict sc-status">{result.status === 'running' ? 'reading…' : 'queued'}</td>
+  if (result.status !== 'done') return <td className="sc-verdict sc-status">{result.status === 'running' ? <Reading step={result.step} /> : 'queued'}</td>
   const verdict = result.verdict ?? 'unverified'
   return <td className={`sc-verdict sc-v-${verdict}`}>{verdict}</td>
+}
+
+/** A company being read: the steps behind it and the one it is in, where the server says which. */
+function Reading({ step }: { step: string | null }): ReactElement {
+  const reading = readingAt(step)
+  if (!reading) return <>reading…</>
+  return (
+    <span className="sc-rail" title={`Step ${reading.at + 1} of ${reading.of} of reading a company`}>
+      {Array.from({ length: reading.of }, (_, at) => (
+        <i key={at} className={at < reading.at ? 'sc-rail-done' : at === reading.at ? 'sc-rail-now' : undefined} />
+      ))}
+      {reading.word}
+    </span>
+  )
 }
 
 /** One criterion's answer; a verification that did not hold is marked, with what was wrong as its tooltip. */
