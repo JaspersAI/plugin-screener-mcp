@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { Mark } from './Funnel'
 import {
+  ABSENCE_TEXT,
+  absentTickers,
   doingText,
   elapsedText,
   finished,
@@ -224,6 +226,7 @@ export function RunProgress({ criteria, run, snapshot }: ProgressProps): ReactEl
             )}
             <Names verdict="pass" count={snapshot.progress.pass} tickers={verdictTickers(snapshot, 'pass')} />
             <Names verdict="fail" count={snapshot.progress.fail} tickers={verdictTickers(snapshot, 'fail')} />
+            <Absent count={absentTickers(snapshot).length} />
           </>
         )}
       </span>
@@ -253,6 +256,16 @@ function Names({ verdict, count, tickers }: { verdict: Verdict; count: number; t
         <b>{count}</b> {verdict}
       </span>
       {tickers.length > 0 && <span className="sc-names">{tickers.join(' · ')}</span>}
+    </span>
+  )
+}
+
+/** How many of the fails rest on nothing found, which is what most often makes a whole run fail. Nothing when none does. */
+function Absent({ count }: { count: number }): ReactElement | null {
+  if (count === 0) return null
+  return (
+    <span className="sc-absent" title={ABSENCE_TEXT}>
+      {count} of them by absence: nothing in the filings spoke to a criterion
     </span>
   )
 }

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  ABSENCE_TEXT,
+  absentTickers,
+  byAbsence,
   cellText,
   commonPrefix,
   DEFAULT_SORT,
@@ -514,6 +517,27 @@ test('a verification that did not hold is marked; one that did, or a claim of ab
   assert.match(verificationMark('uncertain')!, /not confident/)
 })
 
+test('a fail that rests on nothing found is told from a no, and a company that failed only so is counted', () => {
+  assert.equal(byAbsence({ verdict: 'fail', verification: 'not_checked' }), true)
+  assert.equal(byAbsence({ verdict: 'fail', verification: 'supports' }), false)
+  assert.equal(byAbsence({ verdict: 'fail', verification: 'says_nothing' }), false)
+  assert.equal(byAbsence({ verdict: 'unclear', verification: 'not_checked' }), false)
+  assert.match(ABSENCE_TEXT, /8-K/)
+  const absent = { id: 'mgmt_change', verdict: 'fail', rationale: 'No passage was found relevant.', verification: 'not_checked', confidence: null, note: '' }
+  const no = { id: 'interim', verdict: 'fail', rationale: 'The CEO is permanent.', verification: 'supports', confidence: 0.9, note: '' }
+  const yes = { ...no, verdict: 'pass' }
+  const run = readRun({ ...META, status: 'done' }, [
+    { cik: 1, ticker: 'SAH', status: 'done', verdict: 'fail', criteria: [absent, { ...absent, id: 'interim' }] },
+    { cik: 2, ticker: 'WMK', status: 'done', verdict: 'fail', criteria: [absent, yes] },
+    { cik: 3, ticker: 'BOBS', status: 'done', verdict: 'fail', criteria: [absent, no] },
+    { cik: 4, ticker: 'RVLV', status: 'done', verdict: 'pass', criteria: [yes] },
+    { cik: 5, ticker: 'SBH', status: 'running', verdict: null, criteria: [] },
+  ])
+  // BOBS failed one criterion on what was read, so its fail is not only for want of a passage.
+  assert.deepEqual(absentTickers(run), ['SAH', 'WMK'])
+  assert.deepEqual(absentTickers(null), [])
+})
+
 test('what was searched and read for a criterion reads in one line', () => {
   assert.equal(gatheredText({ searched: 5, judged: 9, paragraphs: 31, relevant: 2 }), '5 searches made, 9 passages judged, 31 paragraphs read, 2 relevant')
   assert.equal(gatheredText({ searched: 1, judged: 1, paragraphs: 1, relevant: 0 }), '1 search made, 1 passage judged, 1 paragraph read, 0 relevant')
@@ -564,6 +588,10 @@ test('the summary says how many pass, of how many, behind which screen, and wher
     'Screener: 3 of 5,378 pass, sort revenue desc, qualitative run running: fetching earnings calls: 1 of 3 · 0 pass · 0 fail · 0 unclear · 0 unverified',
   )
   assert.equal(summarize({}, output({ qualitative: { run_id: null, status: 'error', progress: null, error: 'the list is too long' } })), 'Screener: 281 of 5,378 pass, sort revenue desc, qualitative run failed: the list is too long')
+  assert.equal(
+    summarize({}, output({ count: 3, qualitative: { run_id: 'run_1', status: 'done', progress: { ...META.progress, running: 0, error: 0, pass: 0, fail: 3 }, absent: 3 } })),
+    'Screener: 3 of 5,378 pass, sort revenue desc, qualitative run done: 3 read · 0 pass · 3 fail · 0 unclear · 0 unverified, 3 of the fails by absence: no passage of the filings spoke to a criterion',
+  )
 })
 
 test('where the qualitative stage stands is one word, and a run asked for with no criteria is not "starting"', () => {

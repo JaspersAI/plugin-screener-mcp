@@ -7,6 +7,7 @@ import { Funnel } from './Funnel'
 import { QualitativeBar, RunProgress } from './Qualitative'
 import { Table } from './Table'
 import {
+  absentTickers,
   DEFAULT_COLUMNS,
   DEFAULT_SORT,
   echoOf,
@@ -328,6 +329,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
             progress: snapshot?.progress ?? null,
             ...(snapshot?.phase ? { earnings_calls: snapshot.phase } : {}),
             ...(snapshot ? { passed: passedTickers(snapshot) } : {}),
+            ...(snapshot ? { absent: absentTickers(snapshot).length } : {}),
             ...(run.error ? { error: run.error } : {}),
           }
         : undefined,

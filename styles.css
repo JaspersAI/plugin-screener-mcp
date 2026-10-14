@@ -613,6 +613,12 @@ th.sc-company {
   cursor: help;
 }
 
+/* A fail by absence: nothing was found, so it is said in grey beside the verdict, and its tooltip says what that means. */
+.sc-absent {
+  color: var(--jaspers-muted-foreground, #737373);
+  cursor: help;
+}
+
 /* A company being read: a square for each step the server takes it through, the ones behind it filled, the one it is in pulsing. */
 
 .sc-rail {

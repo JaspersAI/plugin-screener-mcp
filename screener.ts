@@ -872,6 +872,28 @@ export function verificationMark(verification: string): string | null {
   return `Verification: ${verification}.`
 }
 
+/**
+ * A fail that rests on nothing found: no passage of the company's filings or calls was relevant to the
+ * question, so the server decided it in code and no model read it as a no. It cites nothing, and is
+ * marked so in the table, since a run of them reads as a screen that found every company wanting.
+ */
+export function byAbsence(answer: Pick<CriterionResult, 'verdict' | 'verification'>): boolean {
+  return answer.verdict === 'fail' && answer.verification === 'not_checked'
+}
+
+/** What a fail by absence means, for its tooltip and the funnel's. */
+export const ABSENCE_TEXT =
+  'Nothing in the newest 10-K or 10-Q, or the earnings calls read, spoke to this question, so it fails by absence: nothing was found, which is not the same as a no. ' +
+  'A question those filings do not cover (a change of officers, for one, is filed on an 8-K) fails this way for every company; reword it as something a 10-K or 10-Q would state.'
+
+/** The companies that failed only for want of a passage: on every criterion they failed, nothing was found. */
+export function absentTickers(run: Pick<RunSnapshot, 'results'> | null): string[] {
+  return (run?.results ?? []).flatMap((result) => {
+    const failed = result.criteria.filter((c) => c.verdict === 'fail')
+    return result.verdict === 'fail' && result.ticker && failed.length > 0 && failed.every(byAbsence) ? [result.ticker] : []
+  })
+}
+
 /** What was searched and read for one criterion, in one line. */
 export function gatheredText(gathered: NonNullable<CriterionResult['gathered']>): string {
   const n = (count: number, one: string, many: string): string => `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`
@@ -922,8 +944,8 @@ export interface Output {
   sort: Sort
   qualitative_ready: boolean
   qualitative_max: number
-  /** status is a Stage. earnings_calls: the run's first phase, once it has started. passed: the tickers with a pass, once there are results; the rows above are only the list that was read. */
-  qualitative?: { run_id: string | null; status: string; progress: Progress | null; earnings_calls?: Phase; passed?: string[]; error?: string }
+  /** status is a Stage. earnings_calls: the run's first phase, once it has started. passed: the tickers with a pass, once there are results; the rows above are only the list that was read. absent: how many of the fails rest on nothing found (byAbsence). */
+  qualitative?: { run_id: string | null; status: string; progress: Progress | null; earnings_calls?: Phase; passed?: string[]; absent?: number; error?: string }
   open: string
 }
 
@@ -964,6 +986,7 @@ export function summarize(state: Partial<State>, output: Partial<Output>): strin
             ? 'a qualitative run was asked for but NOT started: state.criteria is empty'
             : `qualitative run ${q.status}`,
     )
+    if (q.absent) parts.push(`${q.absent.toLocaleString('en-US')} of the fails by absence: no passage of the filings spoke to a criterion`)
   } else if (output.qualitative_ready) parts.push('ready for the qualitative stage')
   if (output.open) parts.push(`evidence open for ${output.open}`)
   return parts.join(', ')

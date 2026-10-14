@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { cellText, fieldLabel, readingAt, signOf, verificationMark, type CompanyResult, type Criterion, type Field, type Sort } from './screener'
+import { ABSENCE_TEXT, byAbsence, cellText, fieldLabel, readingAt, signOf, verificationMark, type CompanyResult, type Criterion, type Field, type Sort } from './screener'
 
 // The table: the company, a run's verdicts when there is one, then the fields filtered, sorted and
 // asked for. A header sorts, and sorting is the server's job — the sort goes into the panel's
@@ -123,15 +123,19 @@ function Reading({ step }: { step: string | null }): ReactElement {
   )
 }
 
-/** One criterion's answer; a verification that did not hold is marked, with what was wrong as its tooltip. */
+/** One criterion's answer; a verification that did not hold is marked, with what was wrong as its tooltip, and so is a fail by absence. */
 function CriterionCell({ result, id }: { result: CompanyResult | undefined; id: string }): ReactElement {
   const answer = result?.criteria.find((criterion) => criterion.id === id)
   if (!answer) return <td className="sc-verdict sc-status">—</td>
   const mark = verificationMark(answer.verification)
+  // A fail by absence is nothing found, not a no: marked, with what that means before the server's account of the search.
+  const absent = byAbsence(answer)
+  const title = mark ?? (absent ? `${ABSENCE_TEXT}\n\n${answer.rationale}`.trim() : answer.rationale)
   return (
-    <td className={`sc-verdict sc-v-${answer.verdict}`} title={mark ?? answer.rationale}>
+    <td className={`sc-verdict sc-v-${answer.verdict}`} title={title}>
       {answer.verdict}
       {mark && <span className="sc-mark"> !</span>}
+      {absent && <span className="sc-absent"> · nothing found</span>}
     </td>
   )
 }
