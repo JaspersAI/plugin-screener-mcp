@@ -72,6 +72,8 @@ export const DEFAULT_SORT: Sort = { field: 'revenue', dir: 'desc' }
 
 /** The columns a new screener shows. The fields filtered and sorted on are shown whatever this says. */
 export const DEFAULT_COLUMNS = [
+  'market_cap',
+  'price',
   'revenue',
   'revenue_growth_yoy',
   'gross_margin',

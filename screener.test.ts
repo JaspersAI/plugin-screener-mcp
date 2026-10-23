@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   cellText,
   commonPrefix,
+  DEFAULT_COLUMNS,
   DEFAULT_SORT,
   doingText,
   echoOf,
@@ -50,6 +51,7 @@ import {
   type Filter,
   type Output,
 } from './screener.ts'
+import { INSTRUCTIONS } from './instructions.ts'
 
 // The plugin's pure half: what goes to the server and what its answers hold, what a cell and a chip
 // say, how a typed value is read, and the text the model is given. Everything here runs without
@@ -96,6 +98,19 @@ test('a field\'s name reads as a label', () => {
 test('the table draws the fields filtered on, the sort, then the columns asked for, each once and never the company\'s own', () => {
   const filters: Filter[] = [{ field: 'gross_margin', op: 'gte', value: 0.5 }, { field: 'sic_description', op: 'contains', value: 'software' }]
   assert.deepEqual(shownColumns(filters, DEFAULT_SORT, ['revenue', 'roe', 'gross_margin', 'name']), ['gross_margin', 'revenue', 'roe'])
+})
+
+test('a new screener shows market_cap and price in its default columns, and its instructions describe market data, valuation and technicals', () => {
+  assert.ok(DEFAULT_COLUMNS.includes('market_cap'))
+  assert.ok(DEFAULT_COLUMNS.includes('price'))
+  const cols = shownColumns([], DEFAULT_SORT, DEFAULT_COLUMNS)
+  assert.ok(cols.includes('market_cap'))
+  assert.ok(cols.includes('price'))
+  assert.doesNotMatch(INSTRUCTIONS, /no market data|no price, market cap/i)
+  assert.match(INSTRUCTIONS, /market_cap/)
+  assert.match(INSTRUCTIONS, /price_to_earnings/)
+  assert.match(INSTRUCTIONS, /technicals/)
+  assert.match(INSTRUCTIONS, /price_date/)
 })
 
 test('cellText formats by unit, and a missing value is a dash', () => {

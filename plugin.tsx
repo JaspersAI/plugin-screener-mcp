@@ -127,7 +127,8 @@ const qualitative = defineSource({
 const company = defineSource({
   mcp: 'jaspers',
   tool: 'get_company',
-  description: 'One company by ticker: identity, latest-fiscal-year fundamentals, institutional holders, insiders, newest filings.',
+  description:
+    'One company by ticker: identity, index membership, latest-fiscal-year fundamentals, price and market cap with valuation and technicals, institutional holders, insiders, newest filings.',
 })
 
 export default definePlugin({
