@@ -129,7 +129,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     () => screenArgs({ filters, tickers, includeUnlisted, sort, page, columns, sessionId: session.current }, echo.current, PAGE),
     [asked],
   )
-  const { data, loading, error, meta } = useData('screener-mcp/screen', args)
+  const { data, loading, error, meta, refetch } = useData('screener-mcp/screen', args)
   const screen = useMemo(() => readScreen(meta), [meta])
   const rows = data ?? NONE
   /** The session holds the list on screen and no call is out: what a run would freeze is what the user sees. */
@@ -148,6 +148,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     echo.current = null
     void bridge.setState(ref, ['sessionId'], null)
     setAgain((n) => n + 1)
+    refetch()
   }
 
   // A session the server no longer has (another server, a database set up again): start a new one.
