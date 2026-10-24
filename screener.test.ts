@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   cellText,
+  CLEARED_RUN,
   commonPrefix,
   DEFAULT_COLUMNS,
   DEFAULT_SORT,
   doingText,
   echoOf,
   elapsedText,
+  evidenceKey,
   evidenceText,
   fieldLabel,
   filterText,
@@ -21,6 +23,8 @@ import {
   groupFields,
   inSync,
   mergeRun,
+  missingRun,
+  missingSession,
   needsStart,
   OUTPUT_BYTES,
   overLimit,
@@ -593,6 +597,30 @@ test('where the qualitative stage stands is one word, and a run asked for with n
   assert.equal(stageOf(criteria, { id: 'run_1' }), 'running')
   assert.equal(stageOf(criteria, { id: 'run_1', status: 'done' }), 'done')
   assert.equal(stageOf(criteria, { status: 'error', error: 'over the limit' }), 'error')
+  // A saved run the server no longer has is cleared, not shown as a failed criterion.
+  assert.equal(stageOf(criteria, { id: 'run_07d4f7e3cb7eeb99', status: 'error', error: 'No qualitative run run_07d4f7e3cb7eeb99.' }), 'none')
+})
+
+test('a session or qualitative run the server no longer has is recognised, and clearing a run resets the run, verdict filter and open company', () => {
+  assert.equal(missingSession('No screening session scr_00000000000000aa. Leave session_id out to start one.'), true)
+  assert.equal(missingSession('No screening session scr_00000000000000aa. Start one with screen_companies.'), true)
+  assert.equal(missingSession('Bedrock timed out'), false)
+  assert.equal(missingSession(null), false)
+  assert.equal(missingRun('No qualitative run run_07d4f7e3cb7eeb99.'), true)
+  assert.equal(missingRun('Bedrock timed out'), false)
+  assert.equal(missingRun(undefined), false)
+  assert.deepEqual(CLEARED_RUN, { run: null, verdicts: [], open: '' })
+})
+
+test('an open company\'s evidence is only asked for and shown once the run itself is in', () => {
+  const snapshot = readRun(META, ROWS)
+  // Without a snapshot (while the run is being read, or after a saved run failed or expired), no evidence pane is shown.
+  assert.equal(evidenceKey('run_07d4f7e3cb7eeb99', 'DDOG', null), '')
+  assert.equal(evidenceKey(undefined, 'AAPL', snapshot), '')
+  assert.equal(evidenceKey('run_00000000000000bb', '', snapshot), '')
+  assert.equal(evidenceKey('run_00000000000000bb', 'AAPL', snapshot), 'run_00000000000000bb|AAPL|done|pass')
+  assert.equal(evidenceKey('run_00000000000000bb', 'MSFT', snapshot), 'run_00000000000000bb|MSFT|running|')
+  assert.equal(evidenceKey('run_00000000000000bb', 'DDOG', snapshot), 'run_00000000000000bb|DDOG||')
 })
 
 test('who passed is the companies with a pass, by ticker: the rows of the table are only the list that was read', () => {
