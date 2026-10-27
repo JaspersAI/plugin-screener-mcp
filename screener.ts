@@ -615,10 +615,34 @@ export function needsStart(criteria: Criterion[] | undefined, run: Run | null | 
 export type Stage = 'none' | 'no_criteria' | 'starting' | 'running' | 'done' | 'error'
 
 export function stageOf(criteria: Criterion[] | undefined, run: Run | null | undefined): Stage {
-  if (!run) return 'none'
+  if (!run || missingRun(run.error)) return 'none'
   if (run.status === 'error' && run.error) return 'error'
   if (!run.id) return criteria?.length ? 'starting' : 'no_criteria'
   return run.status === 'done' ? 'done' : 'running'
+}
+
+/** What clearing a qualitative run (or dropping one the server no longer has) resets on the panel's state; the criteria stay. */
+export const CLEARED_RUN: Pick<State, 'run' | 'verdicts' | 'open'> = { run: null, verdicts: [], open: '' }
+
+/** Whether an error says the server no longer has the screening session a panel saved. */
+export function missingSession(error: string | null | undefined): boolean {
+  return typeof error === 'string' && /No screening session/.test(error)
+}
+
+/** Whether an error says the server no longer has the qualitative run a panel saved. */
+export function missingRun(error: string | null | undefined): boolean {
+  return typeof error === 'string' && /No qualitative run/.test(error)
+}
+
+/**
+ * Which company's evidence is open, and the answer it was read for, once the run itself is in. Empty
+ * while no company is open, while there is no run, or before the run has been read: until then there
+ * is nothing to ask for and no pane to show.
+ */
+export function evidenceKey(runId: string | undefined, open: string, snapshot: Pick<RunSnapshot, 'results'> | null): string {
+  if (!open || !runId || !snapshot) return ''
+  const result = snapshot.results.find((one) => one.ticker === open)
+  return `${runId}|${open}|${result?.status ?? ''}|${result?.verdict ?? ''}`
 }
 
 /** What a started run answers with. */
