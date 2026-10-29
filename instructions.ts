@@ -1,11 +1,26 @@
-// What the orchestrator is told while a screener element is focused. The server's own guide
-// (get_guide, the source screener-mcp/guide) is the long form and changes with the data; this is the
-// work loop on this host, where the table is the panel's state and the orchestrator changes it by
-// setting that.
+// What the orchestrator is told while a screener element is focused, and what each source says of
+// itself in the catalog. The server's own guide (get_guide, the source screener-mcp/guide) is the
+// long form and changes with the data; this is the work loop on this host, where the table is the
+// panel's state and the orchestrator changes it by setting that.
+
+export const SCREEN_DESCRIPTION =
+  'Screen US SEC registrants with filters {field, op, value} on any field of a company, narrowed over several calls in one session — place and drive the screener-mcp/screener view instead of calling this to fill a core/table. Raw units: USD, fractions.'
+
+export const GUIDE_DESCRIPTION =
+  'How to read the screener\'s data. topic "fields": every field with its kind, unit and ops. "screening": the filter language with examples, and how the qualitative stage works. "overview": coverage, limits and freshness.'
+
+export const QUALITATIVE_START_DESCRIPTION =
+  'Start the qualitative stage over a session\'s list (every company read against criteria in words, with verified quotes) — place or update the screener-mcp/screener view\'s state.criteria and state.run instead of calling this or building a core/table; the view starts and follows the run itself. Costs model calls per company.'
+
+export const QUALITATIVE_DESCRIPTION =
+  'Progress and results of a qualitative run — place or update the screener-mcp/screener view instead of polling this to fill a core/table. With evidence: true (and tickers or verdicts set) each criterion lists the ids of its citations, and citations holds each quote once with its title and link.'
+
+export const COMPANY_DESCRIPTION =
+  'One company by ticker: identity, index membership, latest-fiscal-year fundamentals, price and market cap with valuation and technicals, institutional holders, insiders, newest filings.'
 
 export const INSTRUCTIONS = `A screener over US SEC registrants (companies that file 10-K and 10-Q), one row per company: latest-fiscal-year fundamentals from XBRL, the latest close, volume and market_cap from Yahoo Finance with valuation multiples (enterprise_value, price_to_earnings, price_to_sales, price_to_book, ev_to_ebitda, dividend_yield, fcf_yield) and price technicals, index membership, institutional holders from Form 13F, insider trading from Forms 3/4/5, and each company's newest 10-K and 10-Q as text. Every figure is for the period in fiscal_period_end for fundamentals, price_date for market data and valuation, technicals_date for technicals, and inst_period for holders; say which.
 
-This element is the whole screen: a request to find companies is answered in it, from start to finish, and nothing else. The quantitative step is its filters; the step in words after it is its qualitative run, which reads every company's filings and its most recent earnings call itself. So do not build anything beside it: no tables, lists, documents, loops or other elements of your own, and no data from other plugins or sources to work out what the screen answers (earnings beats, guidance, products, customers, events): what no field holds is a criterion, and the run reads it. Do the filters, then go straight on to the run, without stopping in between.
+This element is the whole screen: a request to find companies (including a ranked or "top 10" subset) is answered in it, from start to finish, and nothing else. The quantitative step is its filters; the step in words after it is its qualitative run, which reads every company's filings and its most recent earnings call itself. So do not build anything beside it or in its place: never place a core/table (whether over screener-mcp/screen or a SQL query joining run_rows), a list, a document, a loop or any other element for the screen's results, and never pull data from other plugins or sources to work out what the screen answers (earnings beats, guidance, products, customers, events): what no field holds is a criterion, and the run reads it. When the user asks for a ranked or top-N screen, keep this screener-mcp/screener view on screen sorted by the relevant field with state.verdicts set to ["pass"], and rank or summarize the top N in your conversation reply. Do the filters, then go straight on to the run, without stopping in between.
 
 Drive the element by its state only; it makes the server calls itself. state.filters is a list of {field, op, value}, joined by AND, and it is always the COMPLETE set: to add, loosen or drop one filter, write the whole list again. Values are RAW: USD not millions (market_cap 2e9 is $2B, revenue 5e8 is $500M), fractions not percent (0.2 is 20%), ISO dates. Ops: gt gte lt lte eq ne between (value [low, high]) in (value a list) contains (text) is_null not_null (no value); text compares ignore case. A comparison never matches a company with no value for the field, so roe gt 0.15 also drops every company with negative equity. state.tickers is only for a list the user gives you themselves (their watchlist), as the SEC writes tickers (BRK-B); never fill it to pick companies yourself, the filters do that; [] is every company. state.sort is {field, dir}; state.columns the fields shown besides those filtered and sorted on (every row already has the company's name, ticker and SEC industry: never list those); state.page starts at 0 and goes back to 0 with a new list. Leave state.sessionId alone. When unsure of a field's name, unit or ops, run the source screener-mcp/guide with {"topic": "fields"}; {"topic": "screening"} has the filter language with examples, {"topic": "overview"} what the data covers, leaves out and how current it is. Never offer a filter the fields cannot express. The table changes only when state changes: never say you applied anything unless you set state.
 

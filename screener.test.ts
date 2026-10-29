@@ -51,7 +51,14 @@ import {
   type Filter,
   type Output,
 } from './screener.ts'
-import { INSTRUCTIONS } from './instructions.ts'
+import {
+  COMPANY_DESCRIPTION,
+  GUIDE_DESCRIPTION,
+  INSTRUCTIONS,
+  QUALITATIVE_DESCRIPTION,
+  QUALITATIVE_START_DESCRIPTION,
+  SCREEN_DESCRIPTION,
+} from './instructions.ts'
 
 // The plugin's pure half: what goes to the server and what its answers hold, what a cell and a chip
 // say, how a typed value is read, and the text the model is given. Everything here runs without
@@ -605,4 +612,19 @@ test('who passed is the companies with a pass, by ticker: the rows of the table 
   assert.deepEqual(passedTickers(run), ['AAA'])
   assert.deepEqual(verdictTickers(run, 'fail'), ['BBB'])
   assert.deepEqual(passedTickers(null), [])
+})
+
+test('instructions and source descriptions direct ranked or top-N screens to screener-mcp/screener rather than core/table', () => {
+  const firstSentence = (text: string): string => /^.*?[.!?](?=\s|$)/s.exec(text.trim())?.[0] ?? text.trim()
+
+  for (const desc of [SCREEN_DESCRIPTION, QUALITATIVE_START_DESCRIPTION, QUALITATIVE_DESCRIPTION]) {
+    const first = firstSentence(desc)
+    assert.match(first, /screener-mcp\/screener/)
+    assert.match(first, /core\/table/)
+  }
+
+  assert.match(GUIDE_DESCRIPTION, /fields/)
+  assert.match(COMPANY_DESCRIPTION, /ticker/)
+  assert.match(INSTRUCTIONS, /core\/table/)
+  assert.match(INSTRUCTIONS, /top 10/i)
 })
