@@ -113,6 +113,12 @@ test('a new screener shows market_cap and price in its default columns, and its 
   assert.match(INSTRUCTIONS, /price_date/)
 })
 
+test('instructions tell the assistant to place screener-mcp/screener from the start rather than core/table or running sources in the background', () => {
+  assert.match(INSTRUCTIONS, /screener-mcp\/screener/)
+  assert.match(INSTRUCTIONS, /core\/table/)
+  assert.doesNotMatch(INSTRUCTIONS, /when there is no screener element on screen/i)
+})
+
 test('cellText formats by unit, and a missing value is a dash', () => {
   assert.equal(cellText(2.5e9, field('revenue')), '$2.50B')
   assert.equal(cellText(12_300_000, field('revenue')), '$12.3M')
