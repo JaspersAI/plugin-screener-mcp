@@ -98,7 +98,7 @@ const screen = defineSource({
   tool: 'screen_companies',
   ttlMs: 0,
   description:
-    'Screen US SEC registrants with filters {field, op, value} on any field of a company, narrowed over several calls in one session. Raw units: USD, fractions. With a screener element on screen, set its state instead.',
+    'Screen US SEC registrants with filters {field, op, value} on any field of a company (raw USD and fractions); place screener-mcp/screener from the start (never core/table) and set its state.filters instead of calling this source yourself.',
 })
 
 const guide = defineSource({
@@ -106,14 +106,14 @@ const guide = defineSource({
   tool: 'get_guide',
   ttlMs: 600_000,
   description:
-    'How to read the screener\'s data. topic "fields": every field with its kind, unit and ops. "screening": the filter language with examples, and how the qualitative stage works. "overview": coverage, limits and freshness.',
+    'How to read the screener\'s data (topics: "fields" for every field with its kind, unit and ops, "screening" for the filter language and qualitative stage, "overview" for coverage and freshness).',
 })
 
 const qualitativeStart = defineSource({
   mcp: 'jaspers',
   tool: 'start_qualitative_screen',
   description:
-    'Start the qualitative stage over a session\'s list: every company read against criteria in words, with verified quotes. Costs model calls per company. With a screener element on screen, set its state.criteria and state.run instead; it starts and follows the run itself.',
+    'Start the qualitative stage over a session\'s list (every company read against criteria in words, with verified quotes); place screener-mcp/screener from the start and set its state.criteria and state.run to {} instead of calling this source yourself.',
 })
 
 const qualitative = defineSource({
@@ -121,7 +121,7 @@ const qualitative = defineSource({
   tool: 'get_qualitative_screen',
   ttlMs: 0,
   description:
-    'Progress and results of a qualitative run. With evidence: true (and tickers or verdicts set) each criterion lists the ids of its citations, and citations holds each quote once with its title and link.',
+    'Progress and results of a qualitative run (the screener-mcp/screener view follows the run itself and reads a company\'s evidence when state.open is set to its ticker; do not poll this source yourself). With evidence: true (and tickers or verdicts set) each criterion lists the ids of its citations, and citations holds each quote once with its title and link.',
 })
 
 const company = defineSource({
@@ -150,7 +150,7 @@ export default definePlugin({
       state: StateSchema,
       output: OutputSchema,
       instructions: INSTRUCTIONS,
-      renders: [screen],
+      renders: [screen, qualitativeStart, qualitative],
       summarize: (state, output) => summarize(state, output),
     }),
   },
