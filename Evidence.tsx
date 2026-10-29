@@ -39,6 +39,9 @@ export function EvidencePane({ ticker, evidence, error, questions, onClose, onLi
         {!error && !company && <p className="sc-status">Reading the evidence…</p>}
         {company?.error && <p className="sc-error">{company.error}</p>}
         {company && company.status !== 'done' && !company.error && <p className="sc-status">This company has not been read yet.</p>}
+        {company && company.status === 'done' && !company.error && company.criteria.length === 0 && (
+          <p className="sc-status">No evidence for this company.</p>
+        )}
         {company?.criteria.map((answer) => {
           const mark = verificationMark(answer.verification)
           return (

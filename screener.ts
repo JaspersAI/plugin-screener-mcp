@@ -614,8 +614,37 @@ export function needsStart(criteria: Criterion[] | undefined, run: Run | null | 
  */
 export type Stage = 'none' | 'no_criteria' | 'starting' | 'running' | 'done' | 'error'
 
+/** What clearing a qualitative run (or dropping one the server no longer has) resets on the panel. */
+export const CLEARED_RUN: Pick<State, 'run' | 'verdicts' | 'open'> = { run: null, verdicts: [], open: '' }
+
+/** Whether a screen error says the server no longer has the panel's session. */
+export function missingSession(error: string | null | undefined): boolean {
+  return Boolean(error && /No screening session/.test(error))
+}
+
+/** Whether a qualitative error says the server no longer has the panel's run. */
+export function missingRun(error: string | null | undefined): boolean {
+  return Boolean(error && /No qualitative run/.test(error))
+}
+
+/** Whether a call failed because the connection is still connecting and should retry once ready. */
+export function isConnecting(error: string | null | undefined): boolean {
+  return Boolean(error && /connection_unavailable/.test(error) && /connecting/.test(error))
+}
+
+/**
+ * Which open company's evidence to read and show, or empty when none: there must be an open ticker
+ * and a loaded run snapshot for `runId`, so a panel whose run is still loading or no longer on the
+ * server never opens a blank or stuck evidence pane.
+ */
+export function openKey(open: string, runId: string | undefined, snapshot: Pick<RunSnapshot, 'results'> | null): string {
+  if (!open || !runId || !snapshot) return ''
+  const result = snapshot.results.find((one) => one.ticker === open)
+  return `${runId}|${open}|${result?.status ?? ''}|${result?.verdict ?? ''}`
+}
+
 export function stageOf(criteria: Criterion[] | undefined, run: Run | null | undefined): Stage {
-  if (!run) return 'none'
+  if (!run || missingRun(run.error)) return 'none'
   if (run.status === 'error' && run.error) return 'error'
   if (!run.id) return criteria?.length ? 'starting' : 'no_criteria'
   return run.status === 'done' ? 'done' : 'running'
