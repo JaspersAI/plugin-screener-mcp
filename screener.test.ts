@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   cellText,
+  CLEARED_RUN,
   commonPrefix,
   DEFAULT_COLUMNS,
   DEFAULT_SORT,
@@ -20,8 +21,12 @@ import {
   gatheredText,
   groupFields,
   inSync,
+  isConnecting,
   mergeRun,
+  missingRun,
+  missingSession,
   needsStart,
+  openKey,
   OUTPUT_BYTES,
   overLimit,
   parseValue,
@@ -593,6 +598,30 @@ test('where the qualitative stage stands is one word, and a run asked for with n
   assert.equal(stageOf(criteria, { id: 'run_1' }), 'running')
   assert.equal(stageOf(criteria, { id: 'run_1', status: 'done' }), 'done')
   assert.equal(stageOf(criteria, { status: 'error', error: 'over the limit' }), 'error')
+  // A run the server no longer has is cleared, not shown as a failed run.
+  assert.equal(stageOf(criteria, { id: 'run_fd71edbf083270de', status: 'error', error: 'No qualitative run run_fd71edbf083270de.' }), 'none')
+})
+
+test('an expired session or qualitative run and a still-connecting server are recognized from the error text', () => {
+  assert.equal(missingSession('No screening session scr_00000000000000aa. Leave session_id out to start one.'), true)
+  assert.equal(missingSession('No qualitative run run_fd71edbf083270de.'), false)
+  assert.equal(missingSession(null), false)
+  assert.equal(missingRun('No qualitative run run_fd71edbf083270de.'), true)
+  assert.equal(missingRun('Bedrock timed out'), false)
+  assert.equal(missingRun(undefined), false)
+  assert.equal(isConnecting('connection_unavailable: screener-mcp/jaspers is connecting'), true)
+  assert.equal(isConnecting('connection_unavailable: screener-mcp/jaspers needs sign-in'), false)
+  assert.equal(isConnecting('No qualitative run run_fd71edbf083270de.'), false)
+  assert.deepEqual(CLEARED_RUN, { run: null, verdicts: [], open: '' })
+})
+
+test('an open company\'s evidence key requires a loaded run snapshot, so an expired or unloaded run opens no blank evidence pane', () => {
+  const run = readRun(META, ROWS)
+  assert.equal(openKey('GILD', 'run_fd71edbf083270de', null), '')
+  assert.equal(openKey('', 'run_00000000000000bb', run), '')
+  assert.equal(openKey('AAPL', undefined, run), '')
+  assert.equal(openKey('AAPL', 'run_00000000000000bb', run), 'run_00000000000000bb|AAPL|done|pass')
+  assert.equal(openKey('MSFT', 'run_00000000000000bb', run), 'run_00000000000000bb|MSFT|running|')
 })
 
 test('who passed is the companies with a pass, by ticker: the rows of the table are only the list that was read', () => {

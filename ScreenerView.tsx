@@ -7,6 +7,7 @@ import { Funnel } from './Funnel'
 import { QualitativeBar, RunProgress } from './Qualitative'
 import { Table } from './Table'
 import {
+  CLEARED_RUN,
   DEFAULT_COLUMNS,
   DEFAULT_SORT,
   echoOf,
@@ -14,8 +15,12 @@ import {
   fitOutput,
   followArgs,
   inSync,
+  isConnecting,
   mergeRun,
+  missingRun,
+  missingSession,
   needsStart,
+  openKey,
   overLimit,
   passedTickers,
   publishedFilters,
@@ -103,10 +108,17 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   const [open, setOpen] = usePanelState<string>(panel, 'open', initial.open ?? '')
   const [dialog, setDialog] = useState<'filters' | 'columns' | null>(null)
 
-  // The connections' statuses, so a run asked for while the server is still connecting starts once
-  // it is ready instead of failing.
+  // The connection's status, so a run asked for or read while the server is still connecting tries
+  // again once it is ready, without re-running on the first delivery or on other connections.
   const connections = useData('connections') as Record<string, { status?: string }> | undefined
-  const connectionsKey = JSON.stringify(Object.values(connections ?? {}).map((c) => c.status))
+  const connectionStatus = connections?.['screener-mcp/jaspers']?.status
+  const [waiting, setWaiting] = useState(false)
+  const [readAgain, setReadAgain] = useState(0)
+  useEffect(() => {
+    if (!waiting || !connectionStatus || connectionStatus === 'connecting') return
+    setWaiting(false)
+    setReadAgain((n) => n + 1)
+  }, [waiting, connectionStatus])
 
   // The fields are the server's: what can be filtered, how, and in which unit a number reads.
   const guide = useData('screener-mcp/guide', FIELDS)
@@ -140,12 +152,16 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   }, [bridge, ref, screen])
 
   // A session the server no longer has (another server, a database set up again): start a new one.
-  useEffect(() => {
-    if (!error || !session.current || !/No screening session/.test(error)) return
+  function resetSession(): void {
     session.current = null
     echo.current = null
     void bridge.setState(ref, ['sessionId'], null)
     setAgain((n) => n + 1)
+  }
+
+  useEffect(() => {
+    if (!session.current || !missingSession(error)) return
+    resetSession()
   }, [bridge, ref, error])
 
   // A list that got shorter than the page it is on, as when the orchestrator sets filters and not the page.
@@ -160,7 +176,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
    */
   async function write(patch: Partial<State>): Promise<void> {
     const current = (await bridge.get(`workspaces/${ref.workspaceId}/panels/${ref.id}/state`)) as Partial<State> | undefined
-    await bridge.setState(ref, [], { ...current, ...patch })
+    await bridge.setState(ref, [], { ...current, sessionId: session.current, ...patch })
   }
 
   /** A new list starts at its first page, whichever control asked for it. */
@@ -170,8 +186,8 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
 
   /** A failed start is asked for again; a run that could not be read is read again. */
   function retry(): void {
-    if (!run?.id) {
-      setRun({})
+    if (!run?.id || missingRun(run.error)) {
+      void write({ ...CLEARED_RUN, run: {} })
       return
     }
     setRun({ id: run.id, status: 'running' })
@@ -203,12 +219,19 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
       } catch (err) {
         starting.current = false
         const text = err instanceof Error ? err.message : String(err)
-        // Not ready yet: the request stays as it is and this runs again when a connection changes.
-        if (/connection_unavailable/.test(text) && /connecting/.test(text)) return
+        // Not ready yet: the request stays as it is and this runs again when the connection is ready.
+        if (isConnecting(text)) {
+          setWaiting(true)
+          return
+        }
+        if (missingSession(text)) {
+          resetSession()
+          return
+        }
         setRun({ status: 'error', error: text })
       }
     })()
-  }, [bridge, criteria, run, screen, settled, setRun, connectionsKey])
+  }, [bridge, criteria, run, screen, settled, setRun, readAgain])
 
   // A run is followed until it is done. The first read is the whole run, at once, so a panel that
   // comes back to a run shows where it is; each one after waits on the server a few seconds and asks
@@ -216,10 +239,10 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   // time, never a burst, and a company's answers are fetched once. Results come without evidence:
   // that is asked for one company at a time, below.
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
-  const [readAgain, setReadAgain] = useState(0)
   /** Each opened company's evidence, and the answer it was read for. */
   const evidence = useRef(new Map<string, { key: string; found: Evidenced }>())
   const runId = run?.id
+  const runError = run?.error
   const status = useRef(run?.status)
   status.current = run?.status
   const chosen = useRef(verdicts)
@@ -228,6 +251,12 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     if (!runId) {
       setSnapshot(null)
       evidence.current.clear()
+      return
+    }
+    if (missingRun(runError)) {
+      setSnapshot(null)
+      evidence.current.clear()
+      void write(CLEARED_RUN)
       return
     }
     let live = true
@@ -248,7 +277,17 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         } catch (err) {
           if (!live) return
           const text = err instanceof Error ? err.message : String(err)
-          if (/connection_unavailable/.test(text) && /connecting/.test(text)) return
+          if (isConnecting(text)) {
+            setWaiting(true)
+            return
+          }
+          // A run the server no longer has (an expired run, another server or database): take it off the panel.
+          if (missingRun(text)) {
+            setSnapshot(null)
+            evidence.current.clear()
+            void write(CLEARED_RUN)
+            return
+          }
           setRun({ id: runId, status: 'error', error: text })
           return
         }
@@ -267,22 +306,21 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     return () => {
       live = false
     }
-  }, [bridge, runId, readAgain, setRun, connectionsKey])
+  }, [bridge, runId, runError, readAgain, setRun])
 
   // The open company's evidence: one call for that company, when its row is opened and again when
   // its answer changes. Quotes stay here, not in state: a company's worth is most of the output
   // budget, and a list's worth is far past it.
   const [shown, setShown] = useState<{ ticker: string; found: Evidenced | null; error: string | null } | null>(null)
-  const openResult = open ? snapshot?.results.find((result) => result.ticker === open) : undefined
-  const openKey = open && runId && snapshot ? `${runId}|${open}|${openResult?.status ?? ''}|${openResult?.verdict ?? ''}` : ''
+  const evidencedKey = openKey(open, runId, snapshot)
   useEffect(() => {
-    if (!openKey || !runId) {
+    if (!evidencedKey || !runId) {
       setShown(null)
       return
     }
     const kept = evidence.current.get(open)
     setShown({ ticker: open, found: kept?.found ?? null, error: null })
-    if (kept?.key === openKey) return
+    if (kept?.key === evidencedKey) return
     let live = true
     void (async () => {
       try {
@@ -290,16 +328,28 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         if (!live) return
         const company = read.results[0]
         if (!company) throw new Error(`The run has no company with the ticker ${open}.`)
-        evidence.current.set(open, { key: openKey, found: { company, citations: read.citations } })
+        evidence.current.set(open, { key: evidencedKey, found: { company, citations: read.citations } })
         setShown({ ticker: open, found: { company, citations: read.citations }, error: null })
       } catch (err) {
-        if (live) setShown({ ticker: open, found: null, error: err instanceof Error ? err.message : String(err) })
+        if (!live) return
+        const text = err instanceof Error ? err.message : String(err)
+        if (isConnecting(text)) {
+          setWaiting(true)
+          return
+        }
+        if (missingRun(text)) {
+          setSnapshot(null)
+          evidence.current.clear()
+          void write(CLEARED_RUN)
+          return
+        }
+        setShown({ ticker: open, found: null, error: text })
       }
     })()
     return () => {
       live = false
     }
-  }, [bridge, runId, open, openKey])
+  }, [bridge, runId, open, evidencedKey, readAgain])
 
   const results = useMemo(() => new Map((snapshot?.results ?? []).map((result) => [result.cik, result])), [snapshot])
   const visible = useMemo(() => {
@@ -321,17 +371,18 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
       sort,
       qualitative_ready: screen?.ready ?? false,
       qualitative_max: screen?.max ?? 0,
-      qualitative: run
-        ? {
-            run_id: run.id ?? null,
-            status: stageOf(criteria, run),
-            progress: snapshot?.progress ?? null,
-            ...(snapshot?.phase ? { earnings_calls: snapshot.phase } : {}),
-            ...(snapshot ? { passed: passedTickers(snapshot) } : {}),
-            ...(run.error ? { error: run.error } : {}),
-          }
-        : undefined,
-      open,
+      qualitative:
+        run && !missingRun(run.error)
+          ? {
+              run_id: run.id ?? null,
+              status: stageOf(criteria, run),
+              progress: snapshot?.progress ?? null,
+              ...(snapshot?.phase ? { earnings_calls: snapshot.phase } : {}),
+              ...(snapshot ? { passed: passedTickers(snapshot) } : {}),
+              ...(run.error ? { error: run.error } : {}),
+            }
+          : undefined,
+      open: evidencedKey ? open : '',
     }),
   })
   // The open company's evidence as text, for a model to quote: every quote carries its [^id].
@@ -362,9 +413,9 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         settled={settled}
         verdicts={verdicts}
         onVerdicts={setVerdicts}
-        onRun={() => setRun({})}
+        onRun={() => void write({ ...CLEARED_RUN, run: {} })}
         onRetry={retry}
-        onClear={() => void write({ run: null, verdicts: [], open: '' })}
+        onClear={() => void write(CLEARED_RUN)}
       />
 
       <Table
@@ -381,7 +432,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         onOpen={(ticker) => setOpen(ticker === open ? '' : ticker)}
       />
 
-      {open && runId && (
+      {evidencedKey && (
         <EvidencePane
           ticker={open}
           evidence={shown?.ticker === open ? shown.found : null}

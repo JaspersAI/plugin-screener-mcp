@@ -5,6 +5,7 @@ import {
   elapsedText,
   finished,
   MAX_CRITERIA,
+  missingRun,
   slug,
   stageOf,
   verdictTickers,
@@ -137,7 +138,7 @@ interface StatusProps extends Pick<Props, 'run' | 'screen' | 'settled' | 'onRun'
 
 /** What can be done about a run: start one, try a failed one again, take one off the panel. Where a run is, the funnel says. */
 function RunStatus({ run, screen, settled, ready, onRun, onRetry, onClear }: StatusProps): ReactElement | null {
-  if (run === null) {
+  if (run === null || missingRun(run.error)) {
     if (!screen) return null
     if (!screen.ready) {
       const over = screen.count - screen.max
