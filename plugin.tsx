@@ -1,6 +1,13 @@
 import { defineConnection, definePlugin, defineSource, defineView } from '@jaspers-ai/sdk'
 import { z } from 'zod'
-import { INSTRUCTIONS } from './instructions'
+import {
+  COMPANY_DESCRIPTION,
+  GUIDE_DESCRIPTION,
+  INSTRUCTIONS,
+  QUALITATIVE_DESCRIPTION,
+  QUALITATIVE_START_DESCRIPTION,
+  SCREEN_DESCRIPTION,
+} from './instructions'
 import { ScreenerView } from './ScreenerView'
 import { DEFAULT_COLUMNS, DEFAULT_SORT, MAX_COLUMNS, MAX_CRITERIA, OPS, summarize, VERDICTS } from './screener'
 
@@ -97,38 +104,33 @@ const screen = defineSource({
   mcp: 'jaspers',
   tool: 'screen_companies',
   ttlMs: 0,
-  description:
-    'Screen US SEC registrants with filters {field, op, value} on any field of a company, narrowed over several calls in one session. Raw units: USD, fractions. With a screener element on screen, set its state instead.',
+  description: SCREEN_DESCRIPTION,
 })
 
 const guide = defineSource({
   mcp: 'jaspers',
   tool: 'get_guide',
   ttlMs: 600_000,
-  description:
-    'How to read the screener\'s data. topic "fields": every field with its kind, unit and ops. "screening": the filter language with examples, and how the qualitative stage works. "overview": coverage, limits and freshness.',
+  description: GUIDE_DESCRIPTION,
 })
 
 const qualitativeStart = defineSource({
   mcp: 'jaspers',
   tool: 'start_qualitative_screen',
-  description:
-    'Start the qualitative stage over a session\'s list: every company read against criteria in words, with verified quotes. Costs model calls per company. With a screener element on screen, set its state.criteria and state.run instead; it starts and follows the run itself.',
+  description: QUALITATIVE_START_DESCRIPTION,
 })
 
 const qualitative = defineSource({
   mcp: 'jaspers',
   tool: 'get_qualitative_screen',
   ttlMs: 0,
-  description:
-    'Progress and results of a qualitative run. With evidence: true (and tickers or verdicts set) each criterion lists the ids of its citations, and citations holds each quote once with its title and link.',
+  description: QUALITATIVE_DESCRIPTION,
 })
 
 const company = defineSource({
   mcp: 'jaspers',
   tool: 'get_company',
-  description:
-    'One company by ticker: identity, index membership, latest-fiscal-year fundamentals, price and market cap with valuation and technicals, institutional holders, insiders, newest filings.',
+  description: COMPANY_DESCRIPTION,
 })
 
 export default definePlugin({
@@ -150,7 +152,7 @@ export default definePlugin({
       state: StateSchema,
       output: OutputSchema,
       instructions: INSTRUCTIONS,
-      renders: [screen],
+      renders: [screen, qualitativeStart, qualitative],
       summarize: (state, output) => summarize(state, output),
     }),
   },
