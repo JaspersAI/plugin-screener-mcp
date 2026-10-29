@@ -4,13 +4,13 @@
 // panel's state and the orchestrator changes it by setting that.
 
 export const SCREEN_DESCRIPTION =
-  'Screen US SEC registrants with filters {field, op, value} on any field of a company, narrowed over several calls in one session — place and drive the screener-mcp/screener view instead of calling this to fill a core/table. Raw units: USD, fractions.'
+  'Screen US SEC registrants with filters {field, op, value} — place and drive screener-mcp/screener instead of calling this to fill a core/table. Narrowed over several calls in one session; raw units: USD, fractions.'
 
 export const GUIDE_DESCRIPTION =
   'How to read the screener\'s data. topic "fields": every field with its kind, unit and ops. "screening": the filter language with examples, and how the qualitative stage works. "overview": coverage, limits and freshness.'
 
 export const QUALITATIVE_START_DESCRIPTION =
-  'Start the qualitative stage over a session\'s list (every company read against criteria in words, with verified quotes) — place or update the screener-mcp/screener view\'s state.criteria and state.run instead of calling this or building a core/table; the view starts and follows the run itself. Costs model calls per company.'
+  'Start the qualitative stage over a session\'s list — set state.criteria and state.run on screener-mcp/screener instead of calling this or building a core/table. Reads filings and earnings calls with verified quotes; costs model calls per company.'
 
 export const QUALITATIVE_DESCRIPTION =
   'Progress and results of a qualitative run — place or update the screener-mcp/screener view instead of polling this to fill a core/table. With evidence: true (and tickers or verdicts set) each criterion lists the ids of its citations, and citations holds each quote once with its title and link.'

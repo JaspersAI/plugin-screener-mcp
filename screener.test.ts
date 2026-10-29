@@ -619,6 +619,7 @@ test('instructions and source descriptions direct ranked or top-N screens to scr
 
   for (const desc of [SCREEN_DESCRIPTION, QUALITATIVE_START_DESCRIPTION, QUALITATIVE_DESCRIPTION]) {
     const first = firstSentence(desc)
+    assert.ok(first.length <= 200, `expected <= 200 chars, got ${first.length}: ${first}`)
     assert.match(first, /screener-mcp\/screener/)
     assert.match(first, /core\/table/)
   }
