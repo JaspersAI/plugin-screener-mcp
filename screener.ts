@@ -577,6 +577,31 @@ export function overLimit(screen: Pick<Screen, 'count' | 'max'>): string {
 
 // The qualitative stage.
 
+export const SCREENER_CONNECTION = 'screener-mcp/jaspers'
+
+/** Whether the screener's MCP connection is ready to take calls. */
+export function isScreenerConnectionReady(
+  connections: Record<string, { status?: string } | undefined> | undefined,
+): boolean {
+  return connections?.[SCREENER_CONNECTION]?.status === 'ready'
+}
+
+/**
+ * Whether an active qualitative run should be followed again when the screener's connection
+ * transitions to ready: only when a run id exists, the run has not already finished in `snapshot`,
+ * and any recorded error was a transient `connection_unavailable`.
+ */
+export function shouldFollowRunOnReady(
+  run: Run | null | undefined,
+  snapshot: Pick<RunSnapshot, 'status'> | null,
+  connectionReady: boolean,
+): boolean {
+  if (!connectionReady || !run?.id) return false
+  if (snapshot?.status === 'done') return false
+  if (run.status === 'error' && !/connection_unavailable/.test(run.error ?? '')) return false
+  return true
+}
+
 /** A criterion's id from its question: the words that say something, as the server's pattern wants them (^[a-z0-9_]{1,40}$), unlike any taken. */
 export function slug(question: string, taken: string[] = []): string {
   const words = question.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean)

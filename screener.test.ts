@@ -20,6 +20,7 @@ import {
   gatheredText,
   groupFields,
   inSync,
+  isScreenerConnectionReady,
   mergeRun,
   needsStart,
   OUTPUT_BYTES,
@@ -38,6 +39,7 @@ import {
   REMOVED_NAMES,
   removedText,
   screenArgs,
+  shouldFollowRunOnReady,
   shownColumns,
   signOf,
   slug,
@@ -605,4 +607,22 @@ test('who passed is the companies with a pass, by ticker: the rows of the table 
   assert.deepEqual(passedTickers(run), ['AAA'])
   assert.deepEqual(verdictTickers(run, 'fail'), ['BBB'])
   assert.deepEqual(passedTickers(null), [])
+})
+
+test('isScreenerConnectionReady and shouldFollowRunOnReady watch only screener-mcp/jaspers becoming ready for an unfinished run', () => {
+  assert.equal(isScreenerConnectionReady(undefined), false)
+  assert.equal(isScreenerConnectionReady({}), false)
+  assert.equal(isScreenerConnectionReady({ 'research/jaspers': { status: 'ready' } }), false)
+  assert.equal(isScreenerConnectionReady({ 'screener-mcp/jaspers': { status: 'connecting' } }), false)
+  assert.equal(isScreenerConnectionReady({ 'screener-mcp/jaspers': { status: 'error' } }), false)
+  assert.equal(isScreenerConnectionReady({ 'screener-mcp/jaspers': { status: 'ready' } }), true)
+
+  assert.equal(shouldFollowRunOnReady(null, null, true), false)
+  assert.equal(shouldFollowRunOnReady({}, null, true), false)
+  assert.equal(shouldFollowRunOnReady({ id: 'run_1', status: 'running' }, null, false), false)
+  assert.equal(shouldFollowRunOnReady({ id: 'run_1', status: 'running' }, null, true), true)
+  assert.equal(shouldFollowRunOnReady({ id: 'run_1', status: 'running' }, { status: 'running' }, true), true)
+  assert.equal(shouldFollowRunOnReady({ id: 'run_1', status: 'error', error: 'connection_unavailable' }, null, true), true)
+  assert.equal(shouldFollowRunOnReady({ id: 'run_1', status: 'error', error: 'Unknown run' }, null, true), false)
+  assert.equal(shouldFollowRunOnReady({ id: 'run_1', status: 'done' }, { status: 'done' }, true), false)
 })
