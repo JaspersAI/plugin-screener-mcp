@@ -14,6 +14,7 @@ import {
   fitOutput,
   followArgs,
   inSync,
+  isScreenerConnectionReady,
   mergeRun,
   needsStart,
   overLimit,
@@ -25,6 +26,7 @@ import {
   readScreen,
   readStart,
   screenArgs,
+  shouldFollowRunOnReady,
   shownColumns,
   stageOf,
   type Criterion,
@@ -103,10 +105,10 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   const [open, setOpen] = usePanelState<string>(panel, 'open', initial.open ?? '')
   const [dialog, setDialog] = useState<'filters' | 'columns' | null>(null)
 
-  // The connections' statuses, so a run asked for while the server is still connecting starts once
-  // it is ready instead of failing.
+  // The screener connection's readiness, so a run asked for while the server is still connecting
+  // starts once it is ready instead of failing or reacting to other connections.
   const connections = useData('connections') as Record<string, { status?: string }> | undefined
-  const connectionsKey = JSON.stringify(Object.values(connections ?? {}).map((c) => c.status))
+  const connectionReady = isScreenerConnectionReady(connections)
 
   // The fields are the server's: what can be filtered, how, and in which unit a number reads.
   const guide = useData('screener-mcp/guide', FIELDS)
@@ -203,12 +205,12 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
       } catch (err) {
         starting.current = false
         const text = err instanceof Error ? err.message : String(err)
-        // Not ready yet: the request stays as it is and this runs again when a connection changes.
+        // Not ready yet: the request stays as it is and this runs again when the connection is ready.
         if (/connection_unavailable/.test(text) && /connecting/.test(text)) return
         setRun({ status: 'error', error: text })
       }
     })()
-  }, [bridge, criteria, run, screen, settled, setRun, connectionsKey])
+  }, [bridge, criteria, run, screen, settled, setRun, connectionReady])
 
   // A run is followed until it is done. The first read is the whole run, at once, so a panel that
   // comes back to a run shows where it is; each one after waits on the server a few seconds and asks
@@ -267,7 +269,17 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     return () => {
       live = false
     }
-  }, [bridge, runId, readAgain, setRun, connectionsKey])
+  }, [bridge, runId, readAgain, setRun])
+
+  const wasConnectionReady = useRef(connectionReady)
+  useEffect(() => {
+    const becameReady = !wasConnectionReady.current && connectionReady
+    wasConnectionReady.current = connectionReady
+    if (becameReady && shouldFollowRunOnReady(run, snapshot, connectionReady)) {
+      if (run?.status === 'error' && run.id) setRun({ id: run.id, status: 'running' })
+      setReadAgain((n) => n + 1)
+    }
+  }, [connectionReady, run, snapshot, setRun])
 
   // The open company's evidence: one call for that company, when its row is opened and again when
   // its answer changes. Quotes stay here, not in state: a company's worth is most of the output
