@@ -810,6 +810,34 @@ export function followArgs(runId: string, seen: RunSnapshot | null, waitSeconds:
   return { run_id: runId, wait_seconds: waitSeconds, tickers: reading }
 }
 
+const SCREENER_CONNECTION = 'screener-mcp/jaspers'
+const TRANSIENT_READ_ERROR =
+  /connection_unavailable|fetch failed|enotfound|eai_again|enetunreach|ehostunreach|enetdown|err_internet_disconnected|econnreset|etimedout|socket hang up|while the computer is sleeping or waking/i
+
+/** Whether the screener's own MCP connection is ready, ignoring unrelated connections and non-ready transitions. */
+export function connectionReady(connections: unknown): boolean {
+  if (!isRecord(connections)) return false
+  const entry = connections[SCREENER_CONNECTION]
+  return isRecord(entry) && entry.status === 'ready'
+}
+
+/**
+ * The run state to write after a `get_qualitative_screen` read fails, or `null` when the failure
+ * should be held back: a completed run is never overwritten with an error, a connecting server is
+ * waited on, and a transient network or connection drop during an active run preserves the snapshot.
+ */
+export function runAfterReadError(
+  runId: string,
+  currentStatus: Run['status'] | undefined,
+  seen: Pick<RunSnapshot, 'status'> | null,
+  error: string,
+): Run | null {
+  if (currentStatus === 'done' || seen?.status === 'done') return null
+  if (/connection_unavailable/.test(error) && /connecting/.test(error)) return null
+  if (seen !== null && TRANSIENT_READ_ERROR.test(error)) return null
+  return { id: runId, status: 'error', error }
+}
+
 /** A run as it was last seen, brought up to date by an answer that holds only some of its companies. */
 export function mergeRun(seen: RunSnapshot, next: RunSnapshot): RunSnapshot {
   const fresh = new Map(next.results.map((result) => [result.cik, result]))

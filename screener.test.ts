@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   cellText,
   commonPrefix,
+  connectionReady,
   DEFAULT_COLUMNS,
   DEFAULT_SORT,
   doingText,
@@ -37,6 +38,7 @@ import {
   readTickers,
   REMOVED_NAMES,
   removedText,
+  runAfterReadError,
   screenArgs,
   shownColumns,
   signOf,
@@ -605,4 +607,42 @@ test('who passed is the companies with a pass, by ticker: the rows of the table 
   assert.deepEqual(passedTickers(run), ['AAA'])
   assert.deepEqual(verdictTickers(run, 'fail'), ['BBB'])
   assert.deepEqual(passedTickers(null), [])
+})
+
+test('connectionReady watches only screener-mcp/jaspers becoming ready, and runAfterReadError never overwrites a completed run or transient poll failure', () => {
+  assert.equal(connectionReady(undefined), false)
+  assert.equal(connectionReady({ 'research/jaspers': { status: 'ready' } }), false)
+  assert.equal(connectionReady({ 'screener-mcp/jaspers': { status: 'connecting' } }), false)
+  assert.equal(connectionReady({ 'screener-mcp/jaspers': { status: 'error' } }), false)
+  assert.equal(
+    connectionReady({
+      'research/jaspers': { status: 'error' },
+      'screener-mcp/jaspers': { status: 'ready' },
+    }),
+    true,
+  )
+
+  const runningSnapshot = readRun(META, ROWS)
+  const doneSnapshot = readRun({ ...META, status: 'done' }, ROWS)
+  const offlineError = 'fetch failed (fetch failed (getaddrinfo ENOTFOUND account.jsprai.com))'
+
+  // A completed run (by state status or loaded snapshot) is never overwritten with an error.
+  assert.equal(runAfterReadError('run_1', 'done', doneSnapshot, offlineError), null)
+  assert.equal(runAfterReadError('run_1', 'done', null, offlineError), null)
+  assert.equal(runAfterReadError('run_1', 'running', doneSnapshot, offlineError), null)
+
+  // A connecting connection or a transient network error during an active run holds off failing.
+  assert.equal(runAfterReadError('run_1', 'running', null, 'connection_unavailable: screener-mcp/jaspers is connecting'), null)
+  assert.equal(runAfterReadError('run_1', 'running', runningSnapshot, offlineError), null)
+  assert.equal(
+    runAfterReadError('run_1', 'running', runningSnapshot, 'connection_unavailable: screener-mcp/jaspers is error'),
+    null,
+  )
+
+  // A non-transient error on a run that has never loaded a snapshot still reports the failure.
+  assert.deepEqual(runAfterReadError('run_1', 'running', null, 'No qualitative run run_1.'), {
+    id: 'run_1',
+    status: 'error',
+    error: 'No qualitative run run_1.',
+  })
 })

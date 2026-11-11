@@ -7,6 +7,7 @@ import { Funnel } from './Funnel'
 import { QualitativeBar, RunProgress } from './Qualitative'
 import { Table } from './Table'
 import {
+  connectionReady,
   DEFAULT_COLUMNS,
   DEFAULT_SORT,
   echoOf,
@@ -24,6 +25,7 @@ import {
   readRunText,
   readScreen,
   readStart,
+  runAfterReadError,
   screenArgs,
   shownColumns,
   stageOf,
@@ -103,10 +105,10 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   const [open, setOpen] = usePanelState<string>(panel, 'open', initial.open ?? '')
   const [dialog, setDialog] = useState<'filters' | 'columns' | null>(null)
 
-  // The connections' statuses, so a run asked for while the server is still connecting starts once
-  // it is ready instead of failing.
+  // The connection's readiness, so a run asked for while the server is still connecting starts once
+  // it is ready instead of failing, while ignoring unrelated connections and non-ready transitions.
   const connections = useData('connections') as Record<string, { status?: string }> | undefined
-  const connectionsKey = JSON.stringify(Object.values(connections ?? {}).map((c) => c.status))
+  const ready = connectionReady(connections)
 
   // The fields are the server's: what can be filtered, how, and in which unit a number reads.
   const guide = useData('screener-mcp/guide', FIELDS)
@@ -208,7 +210,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         setRun({ status: 'error', error: text })
       }
     })()
-  }, [bridge, criteria, run, screen, settled, setRun, connectionsKey])
+  }, [bridge, criteria, run, screen, settled, setRun, ready])
 
   // A run is followed until it is done. The first read is the whole run, at once, so a panel that
   // comes back to a run shows where it is; each one after waits on the server a few seconds and asks
@@ -216,6 +218,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   // time, never a burst, and a company's answers are fetched once. Results come without evidence:
   // that is asked for one company at a time, below.
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
+  const seenRun = useRef<{ id: string; snapshot: RunSnapshot } | null>(null)
   const [readAgain, setReadAgain] = useState(0)
   /** Each opened company's evidence, and the answer it was read for. */
   const evidence = useRef(new Map<string, { key: string; found: Evidenced }>())
@@ -226,13 +229,15 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
   chosen.current = verdicts
   useEffect(() => {
     if (!runId) {
+      seenRun.current = null
       setSnapshot(null)
       evidence.current.clear()
       return
     }
+    if (seenRun.current?.id === runId && (seenRun.current.snapshot.status === 'done' || !ready)) return
     let live = true
     void (async () => {
-      let seen: RunSnapshot | null = null
+      let seen: RunSnapshot | null = seenRun.current?.id === runId ? seenRun.current.snapshot : null
       while (live) {
         const asked = Date.now()
         let next: RunSnapshot
@@ -248,10 +253,16 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
         } catch (err) {
           if (!live) return
           const text = err instanceof Error ? err.message : String(err)
-          if (/connection_unavailable/.test(text) && /connecting/.test(text)) return
-          setRun({ id: runId, status: 'error', error: text })
+          const failedRun = runAfterReadError(runId, status.current, seen, text)
+          if (!failedRun) {
+            if (status.current === 'done' || seen?.status === 'done' || /connection_unavailable/.test(text)) return
+            await sleep(POLL_SECONDS * 1000)
+            continue
+          }
+          setRun(failedRun)
           return
         }
+        seenRun.current = { id: runId, snapshot: next }
         setSnapshot(next)
         const now = next.status === 'done' ? 'done' : 'running'
         // A run that finishes shows who passed: until then the rows were only the list being read, and
@@ -267,7 +278,7 @@ function Screener({ panel, initial }: { panel: PanelRef; initial: Partial<State>
     return () => {
       live = false
     }
-  }, [bridge, runId, readAgain, setRun, connectionsKey])
+  }, [bridge, runId, readAgain, setRun, ready])
 
   // The open company's evidence: one call for that company, when its row is opened and again when
   // its answer changes. Quotes stay here, not in state: a company's worth is most of the output
