@@ -20,6 +20,7 @@ import {
   gatheredText,
   groupFields,
   inSync,
+  isMissingRun,
   mergeRun,
   needsStart,
   OUTPUT_BYTES,
@@ -38,6 +39,8 @@ import {
   REMOVED_NAMES,
   removedText,
   screenArgs,
+  screenerConnectionReady,
+  shouldFollowRun,
   shownColumns,
   signOf,
   slug,
@@ -47,6 +50,7 @@ import {
   valueText,
   verdictTickers,
   verificationMark,
+  clearedRunPatch,
   type Field,
   type Filter,
   type Output,
@@ -606,3 +610,26 @@ test('who passed is the companies with a pass, by ticker: the rows of the table 
   assert.deepEqual(verdictTickers(run, 'fail'), ['BBB'])
   assert.deepEqual(passedTickers(null), [])
 })
+
+test('a missing qualitative run is recognized, cleared with its verdicts and open drawer, and never re-polled on error or unrelated connection updates', () => {
+  assert.equal(isMissingRun('No qualitative run run_07d4f7e3cb7eeb99.'), true)
+  assert.equal(isMissingRun('Error: No qualitative run run_fd71edbf083270de.'), true)
+  assert.equal(isMissingRun('Bedrock timed out'), false)
+  assert.equal(isMissingRun(null), false)
+  assert.equal(isMissingRun(undefined), false)
+
+  assert.deepEqual(clearedRunPatch(), { run: null, verdicts: [], open: '' })
+
+  assert.equal(shouldFollowRun({ id: 'run_00000000000000bb', status: 'running' }), true)
+  assert.equal(shouldFollowRun({ id: 'run_00000000000000bb', status: 'done' }), true)
+  assert.equal(shouldFollowRun({ id: 'run_00000000000000bb', status: 'error', error: 'Bedrock timed out' }), false)
+  assert.equal(shouldFollowRun({ id: 'run_07d4f7e3cb7eeb99', status: 'error', error: 'No qualitative run run_07d4f7e3cb7eeb99.' }), false)
+  assert.equal(shouldFollowRun({}), false)
+  assert.equal(shouldFollowRun(null), false)
+
+  assert.equal(screenerConnectionReady(undefined), false)
+  assert.equal(screenerConnectionReady({ 'yfinance/server': { status: 'ready' } }), false)
+  assert.equal(screenerConnectionReady({ 'screener-mcp/jaspers': { status: 'connecting' }, 'yfinance/server': { status: 'ready' } }), false)
+  assert.equal(screenerConnectionReady({ 'screener-mcp/jaspers': { status: 'ready' }, 'yfinance/server': { status: 'connecting' } }), true)
+})
+

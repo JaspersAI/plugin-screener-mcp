@@ -607,6 +607,30 @@ export function needsStart(criteria: Criterion[] | undefined, run: Run | null | 
   return Boolean(criteria?.length) && run !== null && run !== undefined && !run.id && !(run.status === 'error' && run.error)
 }
 
+/** Whether an error from get_qualitative_screen says the run no longer exists on the server. */
+export function isMissingRun(error: string | null | undefined): boolean {
+  return typeof error === 'string' && /No qualitative run\b/i.test(error)
+}
+
+/** The state patch that retires a qualitative run and its verdict filter and open evidence drawer, while keeping the criteria. */
+export function clearedRunPatch(): Pick<State, 'run' | 'verdicts' | 'open'> {
+  return { run: null, verdicts: [], open: '' }
+}
+
+/** Whether a panel's qualitative run should be polled on the server: it has a run id and has not already failed. */
+export function shouldFollowRun(run: Run | null | undefined): run is Run & { id: string } {
+  return Boolean(run?.id) && run?.status !== 'error' && !isMissingRun(run?.error)
+}
+
+/** Whether the screener's own MCP connection is ready, ignoring unrelated plugins' connections. */
+export function screenerConnectionReady(connections: Record<string, { status?: string }> | undefined): boolean {
+  if (!connections) return false
+  const direct = connections['screener-mcp/jaspers']
+  if (direct) return direct.status === 'ready'
+  return Object.entries(connections).some(([id, conn]) => id.startsWith('screener-mcp/') && conn?.status === 'ready')
+}
+
+
 /**
  * Where the qualitative stage stands, in one word, for the bar and the orchestrator alike. A run asked
  * for with no criteria never starts, and must not read as if it had: that is how a reply came to promise
